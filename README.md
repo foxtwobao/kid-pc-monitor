@@ -76,18 +76,28 @@ http://YOUR-PC-IP:5000
 ### Setting Up Daily Limits
 1. Open the web interface on your phone
 2. Click on a PC
-3. Use quick buttons: "30 min", "1 hour", "2 hours"
-4. Or set a custom time limit
+3. View current settings in the "📊 Current Settings" section
+4. Use quick buttons: "30 min", "1 hour", "2 hours"
+5. Or set a custom time limit
+6. Page auto-refreshes to show the new limit
 
 ### Setting Bedtime
 1. Select a PC
 2. Scroll to "Set Lock Time"
 3. Choose bedtime (e.g., 9:00 PM)
-4. PC will lock automatically
+4. PC will lock automatically at that time
+5. See the scheduled lock in "Current Settings"
+
+### Clearing/Removing Limits
+1. View the "📊 Current Settings" section
+2. Click the **❌ Clear** button next to any limit you want to remove
+3. Or click **🗑️ Clear All Limits** to remove everything
+4. Changes take effect immediately
 
 ### Emergency Unlock
 While remote unlock isn't possible for security, you can:
-- Grant extra time before the lock
+- Clear the usage limit to grant unlimited time
+- Clear scheduled locks to prevent automatic locking
 - Send a message to request unlock
 - Restart the PC (if no password)
 

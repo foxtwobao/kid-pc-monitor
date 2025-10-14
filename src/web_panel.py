@@ -205,18 +205,15 @@ def control(ip):
     if username:
         pc_info['current_user'] = username
 
-    # Get current limits and time remaining
+    # Get current limits and time remaining (always update, even if None)
     usage_limit = get_usage_limit(ip)
-    if usage_limit:
-        pc_info['usage_limit'] = usage_limit
+    pc_info['usage_limit'] = usage_limit  # Update even if None to clear old values
 
     lock_times = get_lock_times(ip)
-    if lock_times:
-        pc_info['lock_times'] = lock_times
+    pc_info['lock_times'] = lock_times  # Update even if None to clear old values
 
     time_remaining = get_time_remaining(ip)
-    if time_remaining:
-        pc_info['time_remaining'] = time_remaining
+    pc_info['time_remaining'] = time_remaining  # Update even if None
 
     return render_template('control.html', ip=ip, pc_info=pc_info)
 
@@ -245,9 +242,15 @@ def action():
     elif action_type == 'add_lock_time':
         lock_time = data.get('time', '21:00')
         success, response = send_command(ip, f"ADD_LOCK_TIME:{lock_time}")
+    elif action_type == 'clear_usage_limit':
+        success, response = send_command(ip, "CLEAR_USAGE_LIMIT")
+    elif action_type == 'clear_lock_times':
+        success, response = send_command(ip, "CLEAR_LOCK_TIMES")
+    elif action_type == 'clear_all':
+        success, response = send_command(ip, "CLEAR_ALL")
     else:
         success, response = False, "Unknown action"
-    
+
     return jsonify({'success': success, 'response': response})
 
 # HTML Templates
@@ -511,21 +514,40 @@ CONTROL_TEMPLATE = '''
         <p style="text-align: center; color: #666;">👤 User: <strong>{{ pc_info.current_user }}</strong></p>
         {% endif %}
 
-        <!-- Display Current Settings -->
-        {% if pc_info.get('usage_limit') or pc_info.get('lock_times') %}
+        <!-- Display Current Settings (Always Visible) -->
         <div class="action-group">
             <div class="action-title">📊 Current Settings</div>
+
+            <!-- Daily Usage Limit -->
+            <p>⏱️ <strong>Daily Limit:</strong>
             {% if pc_info.get('usage_limit') %}
-            <p>⏱️ <strong>Daily Limit:</strong> {{ pc_info.usage_limit }} minutes ({{ (pc_info.usage_limit / 60)|round(1) }} hours)</p>
+                {{ pc_info.usage_limit }} minutes ({{ (pc_info.usage_limit / 60)|round(1) }} hours)
+                <button onclick="clearLimit('usage')" style="margin-left: 10px; padding: 5px 10px; background-color: #f44336; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 12px;">❌ Clear</button>
+            {% else %}
+                <span style="color: #999;">Not set</span>
             {% endif %}
-            {% if pc_info.get('time_remaining') %}
+            </p>
+
+            <!-- Time Remaining -->
+            {% if pc_info.get('time_remaining') and pc_info.get('time_remaining') != 'No limits set' %}
             <p>⏳ <strong>Time Remaining:</strong> {{ pc_info.time_remaining }}</p>
             {% endif %}
+
+            <!-- Scheduled Locks -->
+            <p>🕐 <strong>Scheduled Locks:</strong>
             {% if pc_info.get('lock_times') %}
-            <p>🕐 <strong>Scheduled Locks:</strong> {{ pc_info.lock_times|join(', ') }}</p>
+                {{ pc_info.lock_times|join(', ') }}
+                <button onclick="clearLimit('locks')" style="margin-left: 10px; padding: 5px 10px; background-color: #f44336; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 12px;">❌ Clear</button>
+            {% else %}
+                <span style="color: #999;">Not set</span>
+            {% endif %}
+            </p>
+
+            <!-- Clear All Button -->
+            {% if pc_info.get('usage_limit') or pc_info.get('lock_times') %}
+            <button onclick="clearLimit('all')" style="width: 100%; margin-top: 10px; padding: 10px; background-color: #ff5722; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 14px;">🗑️ Clear All Limits</button>
             {% endif %}
         </div>
-        {% endif %}
 
         {% if pc_info.locked %}
         <div class="status-message" style="display: block; background-color: #fff3cd; color: #856404;">
@@ -651,7 +673,7 @@ CONTROL_TEMPLATE = '''
                 showStatus('Please enter time in minutes', false);
                 return;
             }
-            
+
             fetch('/action', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -664,6 +686,12 @@ CONTROL_TEMPLATE = '''
             .then(response => response.json())
             .then(data => {
                 showStatus(data.response, data.success);
+                if (data.success) {
+                    // Reload page after 1 second to show updated settings
+                    setTimeout(() => {
+                        location.reload();
+                    }, 1000);
+                }
             });
         }
         
@@ -673,7 +701,7 @@ CONTROL_TEMPLATE = '''
                 showStatus('Please select a time', false);
                 return;
             }
-            
+
             fetch('/action', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -686,6 +714,50 @@ CONTROL_TEMPLATE = '''
             .then(response => response.json())
             .then(data => {
                 showStatus(data.response, data.success);
+                if (data.success) {
+                    // Reload page after 1 second to show updated settings
+                    setTimeout(() => {
+                        location.reload();
+                    }, 1000);
+                }
+            });
+        }
+
+        function clearLimit(type) {
+            let confirmMsg, action;
+
+            if (type === 'usage') {
+                confirmMsg = 'Clear the daily usage limit?';
+                action = 'clear_usage_limit';
+            } else if (type === 'locks') {
+                confirmMsg = 'Clear all scheduled lock times?';
+                action = 'clear_lock_times';
+            } else if (type === 'all') {
+                confirmMsg = 'Clear ALL limits and scheduled locks?';
+                action = 'clear_all';
+            }
+
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+
+            fetch('/action', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    ip: '{{ ip }}',
+                    action: action
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                showStatus(data.response, data.success);
+                if (data.success) {
+                    // Reload page after 1 second to show updated settings
+                    setTimeout(() => {
+                        location.reload();
+                    }, 1000);
+                }
             });
         }
     </script>

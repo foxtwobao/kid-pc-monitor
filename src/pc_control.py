@@ -141,7 +141,7 @@ class PCTimeControl:
                 text=True
             )
             locked = "LogonUI.exe" in out
-            print(f"[{datetime.now():%H:%M:%S}] LogonUI.exe running? {locked}")
+            # print(f"[{datetime.now():%H:%M:%S}] LogonUI.exe running? {locked}")
             return locked
         except Exception as e:
             print(f"[{datetime.now():%H:%M:%S}] Error checking LogonUI: {e}")
@@ -488,7 +488,28 @@ class RemoteControlServer:
                     return "No time limit set to extend"
                 except ValueError:
                     return "Invalid time value"
-                    
+
+            elif command == "CLEAR_USAGE_LIMIT":
+                self.pc_control.usage_limit = None
+                self.pc_control.save_state()
+                self.logger.info("Usage limit cleared")
+                return "Usage limit cleared"
+
+            elif command == "CLEAR_LOCK_TIMES":
+                self.pc_control.lock_times = []
+                self.pc_control.warnings_sent.clear()  # Clear warnings too
+                self.pc_control.save_state()
+                self.logger.info("All scheduled lock times cleared")
+                return "All scheduled lock times cleared"
+
+            elif command == "CLEAR_ALL":
+                self.pc_control.usage_limit = None
+                self.pc_control.lock_times = []
+                self.pc_control.warnings_sent.clear()
+                self.pc_control.save_state()
+                self.logger.info("All limits and locks cleared")
+                return "All limits and locks cleared"
+
             elif command == "HELP":
                 return (
                     "Available commands:\n"
@@ -503,7 +524,10 @@ class RemoteControlServer:
                     "MESSAGE:<text> - Show popup message\n"
                     "SET_LIMIT:<minutes> - Set usage limit\n"
                     "ADD_LOCK_TIME:HH:MM - Add scheduled lock\n"
-                    "EXTEND_TIME:<minutes> - Extend usage time"
+                    "EXTEND_TIME:<minutes> - Extend usage time\n"
+                    "CLEAR_USAGE_LIMIT - Remove usage limit\n"
+                    "CLEAR_LOCK_TIMES - Remove all scheduled locks\n"
+                    "CLEAR_ALL - Clear all limits and locks"
                 )
                 
             else:
