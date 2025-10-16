@@ -104,7 +104,17 @@ class PCTimeControl:
 
                 # Restore start time (for usage tracking)
                 if 'start_time' in state:
-                    self.start_time = datetime.fromisoformat(state['start_time'])
+                    saved_start_time = datetime.fromisoformat(state['start_time'])
+                    current_date = datetime.now().date()
+                    saved_date = saved_start_time.date()
+
+                    # If start_time is from a previous day, reset it to today
+                    if saved_date < current_date:
+                        self.start_time = datetime.now()
+                        self.logger.info(f"Start time was from {saved_date}, reset to today")
+                        print(f"[{datetime.now():%H:%M:%S}] Usage timer reset for new day")
+                    else:
+                        self.start_time = saved_start_time
 
                 self.logger.info(f"State loaded: {len(self.lock_times)} lock times, usage limit: {self.usage_limit}")
                 print(f"[{datetime.now():%H:%M:%S}] Loaded previous settings from {self.state_file}")
@@ -463,6 +473,8 @@ class RemoteControlServer:
                 try:
                     minutes = int(command.split(":", 1)[1])
                     self.pc_control.set_usage_limit(minutes)
+                    self.pc_control.start_time = datetime.now()  # Reset start time when setting new limit
+                    self.pc_control.warnings_sent.clear()  # Clear warnings for new limit
                     self.pc_control.save_state()  # Save state after setting limit
                     return f"Usage limit set to {minutes} minutes"
                 except ValueError:
