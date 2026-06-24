@@ -275,6 +275,26 @@ def check_admin():
     except:
         return False
 
+def port_check_command():
+    """Return the OS-appropriate command to check if the agent port listens."""
+    if sys.platform.startswith('win'):
+        return f'netstat -an | findstr {AGENT_PORT}'
+    elif sys.platform == 'darwin':
+        # ss isn't available on macOS; lsof is the reliable option.
+        return f'lsof -nP -iTCP:{AGENT_PORT} -sTCP:LISTEN'
+    else:
+        # Linux and other Unixes: ss is the modern default.
+        return f'ss -tlnp | grep {AGENT_PORT}'
+
+def print_port_check_hint():
+    """Tell the user how to verify the agent is actually listening."""
+    print("\n" + "=" * 45)
+    print(f"💡 To verify the agent is listening on port {AGENT_PORT}, run:")
+    print(f"   {port_check_command()}")
+    print(f"\n   If nothing shows up, the agent isn't running. Run it in a")
+    print(f"   console to see why:  python \"{find_pc_control() or 'src/pc_control.py'}\"")
+    print("=" * 45)
+
 def manual_firewall_command():
     """The netsh command a user can run by hand to open the agent port."""
     return (
@@ -393,6 +413,7 @@ if __name__ == "__main__":
         # which Windows Firewall blocks by default — offer to open the port.
         if task_created:
             configure_firewall()
+            print_port_check_hint()
 
     elif choice == "2":
         remove_task()
