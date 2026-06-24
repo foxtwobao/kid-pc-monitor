@@ -3,6 +3,11 @@ import os
 import sys
 from pathlib import Path
 
+# Port the pc_control agent listens on for the parent web panel to connect to.
+# Must match RemoteControlServer's default port in src/pc_control.py.
+AGENT_PORT = 9999
+FIREWALL_RULE_NAME = "Kid PC Monitor (agent)"
+
 def find_pc_control():
     """Locate pc_control.py relative to this installer.
 
@@ -270,6 +275,71 @@ def check_admin():
     except:
         return False
 
+def manual_firewall_command():
+    """The netsh command a user can run by hand to open the agent port."""
+    return (
+        f'netsh advfirewall firewall add rule '
+        f'name="{FIREWALL_RULE_NAME}" dir=in action=allow '
+        f'protocol=TCP localport={AGENT_PORT}'
+    )
+
+def configure_firewall():
+    """Add a Windows Firewall inbound rule for the agent port.
+
+    The agent listens on AGENT_PORT so the parent web panel can connect to it.
+    Without an inbound rule Windows Firewall blocks those connections, so the
+    panel can't reach the kid PC. We make this idempotent by deleting any rule
+    with the same name first, then adding a fresh one.
+    """
+    print(f"\n🔥 Windows Firewall: the agent listens on TCP port {AGENT_PORT} so")
+    print("   the parent web panel can connect to this PC.")
+    print("   Incoming connections must be allowed through the firewall.")
+
+    confirm = input(
+        f"\nAdd a firewall rule to allow incoming TCP port {AGENT_PORT}? (y/n): "
+    ).lower()
+    if confirm != 'y':
+        print("\nℹ️  Skipped. To allow it later, run this in an admin prompt:")
+        print(f"   {manual_firewall_command()}")
+        return False
+
+    # Remove any pre-existing rule with this name so we don't stack duplicates.
+    subprocess.run(
+        f'netsh advfirewall firewall delete rule name="{FIREWALL_RULE_NAME}"',
+        shell=True, capture_output=True, text=True
+    )
+
+    result = subprocess.run(
+        f'netsh advfirewall firewall add rule '
+        f'name="{FIREWALL_RULE_NAME}" dir=in action=allow '
+        f'protocol=TCP localport={AGENT_PORT}',
+        shell=True, capture_output=True, text=True
+    )
+
+    if result.returncode == 0:
+        print(f"\n✅ Firewall rule added: incoming TCP port {AGENT_PORT} allowed.")
+        return True
+    else:
+        print("\n❌ Could not add firewall rule automatically.")
+        if result.stdout.strip():
+            print(result.stdout.strip())
+        if result.stderr.strip():
+            print(result.stderr.strip())
+        print("\nYou can add it manually from an admin prompt:")
+        print(f"   {manual_firewall_command()}")
+        return False
+
+def remove_firewall_rule():
+    """Remove the agent firewall rule (used when removing the task)."""
+    result = subprocess.run(
+        f'netsh advfirewall firewall delete rule name="{FIREWALL_RULE_NAME}"',
+        shell=True, capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        print(f"✅ Firewall rule '{FIREWALL_RULE_NAME}' removed.")
+    else:
+        print("ℹ️  No matching firewall rule found.")
+
 def remove_task():
     """Remove existing task"""
     task_name = "KidPCMonitor"
@@ -306,19 +376,27 @@ if __name__ == "__main__":
     
     if choice == "1":
         print("\nCreating scheduled task with battery-friendly settings...\n")
-        
+
         # Try PowerShell method first (most reliable)
-        if create_task_with_power_settings():
+        task_created = create_task_with_power_settings()
+        if task_created:
             print("\n✅ Setup complete! Task will run even on laptops using battery.")
         else:
             print("\nTrying alternative method...")
-            if create_task_simple_schtasks():
+            task_created = create_task_simple_schtasks()
+            if task_created:
                 print("\n✅ Setup complete using XML method!")
             else:
                 print("\n❌ Could not create task. Please check the error messages above.")
-    
+
+        # The task only matters if the parent web panel can reach the agent,
+        # which Windows Firewall blocks by default — offer to open the port.
+        if task_created:
+            configure_firewall()
+
     elif choice == "2":
         remove_task()
+        remove_firewall_rule()
     
     else:
         print("\nExiting...")
