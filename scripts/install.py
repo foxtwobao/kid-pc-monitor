@@ -3,40 +3,44 @@ import os
 import sys
 from pathlib import Path
 
+def find_pc_control():
+    """Locate pc_control.py relative to this installer.
+
+    The repo layout is fixed: this script lives in scripts/ and pc_control.py
+    lives in src/, so we can find it without asking the user. We also check a
+    couple of fallback locations in case the files were moved.
+    """
+    installer_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(installer_dir, "..", "src", "pc_control.py"),  # repo layout
+        os.path.join(installer_dir, "pc_control.py"),               # alongside installer
+        os.path.join(os.getcwd(), "pc_control.py"),                 # current directory
+    ]
+    for candidate in candidates:
+        candidate = os.path.abspath(candidate)
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
 def get_script_path():
-    """Get the path to pc_control.py from user"""
-    print("📁 Where is pc_control.py located?")
-    print("\nOptions:")
-    print("1. Current directory")
-    print("2. Same directory as this installer")
-    print("3. Enter custom path")
-    
-    choice = input("\nChoice (1-3): ").strip()
-    
-    if choice == "1":
-        script_path = os.path.abspath("pc_control.py")
-    elif choice == "2":
-        script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pc_control.py")
-    else:
-        while True:
-            custom_path = input("\nEnter full path to pc_control.py: ").strip()
-            # Remove quotes if user copied from explorer
-            custom_path = custom_path.strip('"').strip("'")
-            
-            if os.path.exists(custom_path) and custom_path.endswith('.py'):
-                script_path = os.path.abspath(custom_path)
-                break
-            else:
-                print("❌ File not found or not a .py file. Please try again.")
-    
-    # Verify the file exists
-    if not os.path.exists(script_path):
-        print(f"\n❌ Error: Could not find {script_path}")
-        print("Please make sure pc_control.py exists in the specified location.")
-        return None
-    
-    print(f"\n✅ Found: {script_path}")
-    return script_path
+    """Get the path to pc_control.py, auto-detecting when possible."""
+    script_path = find_pc_control()
+
+    if script_path:
+        print(f"✅ Found pc_control.py: {script_path}")
+        return script_path
+
+    # Auto-detection failed — fall back to asking the user.
+    print("⚠️  Could not auto-detect pc_control.py.")
+    while True:
+        custom_path = input("\nEnter full path to pc_control.py: ").strip()
+        # Remove quotes if user copied from explorer
+        custom_path = custom_path.strip('"').strip("'")
+
+        if os.path.exists(custom_path) and custom_path.endswith('.py'):
+            return os.path.abspath(custom_path)
+        else:
+            print("❌ File not found or not a .py file. Please try again.")
 
 def create_task_with_power_settings():
     """Create scheduled task that runs even on battery power"""
