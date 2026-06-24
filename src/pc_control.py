@@ -46,6 +46,17 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
+# When launched via pythonw.exe (as the scheduled task does) there is no
+# console, so sys.stdout/sys.stderr are None and the first print() raises
+# AttributeError, killing the agent before the server can bind port 9999.
+# Redirect them to a file so print() is safe and its output is captured.
+if sys.stdout is None or sys.stderr is None:
+    _console_log = open('pc_control.out.log', 'a', buffering=1, encoding='utf-8')
+    if sys.stdout is None:
+        sys.stdout = _console_log
+    if sys.stderr is None:
+        sys.stderr = _console_log
+
 class PCTimeControl:
     def __init__(self):
         self.lock_times = []
