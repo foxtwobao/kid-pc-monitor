@@ -47,45 +47,67 @@ def get_script_path():
         else:
             print("❌ File not found or not a .py file. Please try again.")
 
+def get_target_user():
+    """Ask which user account the monitor should run under.
+
+    The installer runs elevated — typically as a parent/admin account — but the
+    task must run inside the *monitored* user's session, usually the kid's
+    standard account. os.getenv('USERNAME') here returns the elevated user, so
+    defaulting to it would bind the task to the wrong account and it would never
+    trigger when the kid logs in. Ask explicitly instead.
+    """
+    elevated_user = os.getenv('USERNAME')
+    print("\n👤 Which Windows account should be monitored?")
+    print(f"   This is the account the kid logs in with — NOT the admin")
+    print(f"   account running this installer (currently '{elevated_user}').")
+    target = input("\nKid's Windows username: ").strip()
+    if not target:
+        print(f"⚠️  No username entered; falling back to '{elevated_user}'.")
+        return elevated_user
+    return target
+
 def create_task_with_power_settings():
     """Create scheduled task that runs even on battery power"""
-    
+
     # Get script path from user
     script_path = get_script_path()
     if not script_path:
         return False
-    
+
     pythonw_path = sys.executable.replace('python.exe', 'pythonw.exe')
     task_name = "KidPCMonitor"
-    current_user = os.getenv('USERNAME')
-    
+    target_user = get_target_user()
+
     # Show what we're about to do
     print(f"\n📋 Task Configuration:")
     print(f"   Script: {script_path}")
     print(f"   Python: {pythonw_path}")
     print(f"   Task Name: {task_name}")
-    print(f"   User Account: {current_user}")
-    
+    print(f"   Monitored account: {target_user}")
+
     confirm = input("\nProceed with these settings? (y/n): ").lower()
     if confirm != 'y':
         print("❌ Setup cancelled.")
         return False
-    
+
     # PowerShell script to create task with specific power settings
     ps_script = f'''
     $ErrorActionPreference = 'Stop'
     try {{
         # Create the action
         $action = New-ScheduledTaskAction -Execute "{pythonw_path}" -Argument "{script_path}" -WorkingDirectory "{os.path.dirname(script_path)}"
-        
-        # Create multiple triggers
+
+        # Trigger when the monitored user logs on (scoped to that account so it
+        # fires for the kid's session, not the admin's). An AtStartup trigger is
+        # useless here because an interactive token only exists after logon.
         $triggers = @(
-            (New-ScheduledTaskTrigger -AtStartup),
-            (New-ScheduledTaskTrigger -AtLogon)
+            (New-ScheduledTaskTrigger -AtLogon -User "{target_user}")
         )
-        
-        # Create principal (run with current user)
-        $principal = New-ScheduledTaskPrincipal -UserId "{current_user}" -LogonType Interactive -RunLevel Highest
+
+        # Run as the monitored (kid) account. It's a standard user, so use the
+        # Limited run level — Highest would request an elevation it can't grant
+        # and can stop the task from starting.
+        $principal = New-ScheduledTaskPrincipal -UserId "{target_user}" -LogonType Interactive -RunLevel Limited
         
         # Create settings with power options
         $settings = New-ScheduledTaskSettingsSet `
@@ -143,8 +165,8 @@ def create_task_with_power_settings():
             
             if verify_result.returncode == 0:
                 print("\n✅ Task successfully created and verified!")
-                print(f"   - Triggers: At Startup + At Logon")
-                print(f"   - Running as: {current_user}")
+                print(f"   - Trigger: At logon of {target_user}")
+                print(f"   - Running as: {target_user}")
                 print("\nYou can verify in Task Scheduler (taskschd.msc)")
                 return True
             else:
@@ -169,12 +191,17 @@ def create_task_simple_schtasks():
     if not script_path:
         return False
     
-    python_path = sys.executable
+    # Use pythonw so no console window appears in the kid's session, matching
+    # the primary (PowerShell) method.
+    pythonw_path = sys.executable.replace('python.exe', 'pythonw.exe')
     task_name = "KidPCMonitor"
-    
+    target_user = get_target_user()
+
     print(f"\n📋 Creating task with XML method...")
-    
-    # Create XML with proper power settings
+
+    # Create XML with proper power settings. The trigger and principal are both
+    # scoped to the monitored (kid) account, and run at the Limited level since
+    # it's a standard, non-elevated user.
     xml_content = f'''<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -183,12 +210,14 @@ def create_task_simple_schtasks():
   <Triggers>
     <LogonTrigger>
       <Enabled>true</Enabled>
+      <UserId>{target_user}</UserId>
     </LogonTrigger>
   </Triggers>
   <Principals>
     <Principal id="Author">
+      <UserId>{target_user}</UserId>
       <LogonType>InteractiveToken</LogonType>
-      <RunLevel>HighestAvailable</RunLevel>
+      <RunLevel>LeastPrivilege</RunLevel>
     </Principal>
   </Principals>
   <Settings>
@@ -216,7 +245,7 @@ def create_task_simple_schtasks():
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>{python_path}</Command>
+      <Command>{pythonw_path}</Command>
       <Arguments>"{script_path}"</Arguments>
       <WorkingDirectory>{os.path.dirname(script_path)}</WorkingDirectory>
     </Exec>

@@ -67,6 +67,13 @@ pip install -r requirements.txt
 python scripts/install.py
 ```
 
+> **Which account to enter:** the installer must run elevated (as a parent/admin
+> account), but the monitor has to run inside the **kid's** session. So when it
+> asks for the *"Kid's Windows username"*, enter the **standard account the child
+> logs in with** — not the admin account you used to launch the installer. The
+> scheduled task is created to run as that user, triggered at their logon. If you
+> enter the wrong account, the task installs but never starts when the kid logs in.
+
 2. **On your PC (Windows or macOS; for Linux, see the Linux parent steps below):**
 ```bash
 git clone https://github.com/rookie7799/kid-pc-monitor.git
