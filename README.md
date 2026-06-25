@@ -67,12 +67,21 @@ pip install -r requirements.txt
 python scripts/install.py
 ```
 
-> **Which account to enter:** the installer must run elevated (as a parent/admin
-> account), but the monitor has to run inside the **kid's** session. So when it
-> asks for the *"Kid's Windows username"*, enter the **standard account the child
-> logs in with** — not the admin account you used to launch the installer. The
-> scheduled task is created to run as that user, triggered at their logon. If you
-> enter the wrong account, the task installs but never starts when the kid logs in.
+> ⚠️ **IMPORTANT — enter the KID's account, not yours.** The installer must run
+> elevated, so it is usually launched from a **parent/admin** account. But the
+> monitor has to run inside the **kid's** session. When the installer asks for
+> the *"Kid's Windows username"*, it shows the elevated (admin) account it
+> detected as a hint — **if the kid logs in with a different account (the normal
+> case), type that account instead.** Only accept the detected name if the
+> account you are installing for is the very same one you are logged in as.
+>
+> The scheduled task is created to run as the account you type, triggered at
+> **that** user's logon. Get this wrong and the task installs successfully but
+> **never starts when the kid logs in, and clicking "Run" does nothing** — with
+> no error and no log, which is very hard to diagnose. So double-check this one
+> prompt. You can confirm it later in Task Scheduler → the task's **General** tab
+> → *"When running the task, use the following user account"* should show the
+> **kid's** account.
 
 2. **On your PC (Windows or macOS; for Linux, see the Linux parent steps below):**
 ```bash
@@ -125,6 +134,10 @@ pip install -r requirements.txt
 python scripts/install.py           # Installs pc_control
 python scripts/install_web_panel.py # Installs web panel
 ```
+
+> ⚠️ When `install.py` asks for the *"Kid's Windows username"*, enter the
+> **standard account the child logs in with**, not the admin account you used to
+> run the installer. See the boxed note under Option A for why this matters.
 
 2. **On your phone:**
    - Open browser and go to `http://KIDS-PC-IP:5000`
@@ -224,6 +237,19 @@ This means restrictions **survive PC restarts** - kids can't bypass by rebooting
 - Restart pc_control.py
 - Check if LogonUI.exe detection works
 - See logs in console window
+
+### "Task installed but the agent never runs (port 9999 not listening; clicking Run does nothing)"
+- Almost always the **wrong user account**: the scheduled task was created for
+  the admin/parent account used to run the installer, not the kid's account, so
+  it never triggers at the kid's logon. Open Task Scheduler → the **KidPCMonitor**
+  task → **General** tab and check *"When running the task, use the following
+  user account"*. If it isn't the **kid's** account, re-run `python scripts/install.py`
+  as administrator and enter the **kid's** username when prompted.
+- It runs when you start it manually but not as a task: that confirms the above —
+  manual runs use *your* logged-in session, the task uses the account it was
+  created for.
+- Check the agent's logs in the **`src` folder** (the task's working directory):
+  `pc_control.log` (look for `Server started on port 9999`) and `pc_control.out.log`.
 
 ## 🛡️ Security Notes
 
