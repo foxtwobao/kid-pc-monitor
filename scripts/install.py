@@ -286,25 +286,21 @@ def check_admin():
     except:
         return False
 
-def port_check_command():
-    """Return the OS-appropriate command to check if the agent port listens."""
-    if sys.platform.startswith('win'):
-        return f'netstat -an | findstr {AGENT_PORT}'
-    elif sys.platform == 'darwin':
-        # ss isn't available on macOS; lsof is the reliable option.
-        return f'lsof -nP -iTCP:{AGENT_PORT} -sTCP:LISTEN'
-    else:
-        # Linux and other Unixes: ss is the modern default.
-        return f'ss -tlnp | grep {AGENT_PORT}'
+def print_logon_start_hint(target_user):
+    """Explain when the agent actually starts.
 
-def print_port_check_hint(script_path=None):
-    """Tell the user how to verify the agent is actually listening."""
-    pc_control_path = script_path or find_pc_control() or 'src/pc_control.py'
+    The task runs with an Interactive logon type and the agent needs the kid's
+    desktop session (it shows dialogs, locks the workstation and watches the
+    foreground window). It therefore can't run while only the admin is logged
+    in — it starts on the kid's next logon via the AtLogon trigger. Checking
+    port 9999 right after install would show nothing, which is expected.
+    """
     print("\n" + "=" * 45)
-    print(f"💡 To verify the agent is listening on port {AGENT_PORT}, run:")
-    print(f"   {port_check_command()}")
-    print(f"\n   If nothing shows up, the agent isn't running. Run it in a")
-    print(f"   console to see why:  python \"{pc_control_path}\"")
+    print(f"💡 The agent starts automatically when '{target_user}' next logs in.")
+    print(f"   It runs inside that account's desktop session, so it won't be")
+    print(f"   running yet while you're signed in as the admin — that's normal.")
+    print(f"   Log in as '{target_user}' to start it (or, if that account is")
+    print(f"   already signed in, run: schtasks /run /tn \"KidPCMonitor\").")
     print("=" * 45)
 
 def manual_firewall_command():
@@ -424,7 +420,7 @@ if __name__ == "__main__":
         # which Windows Firewall blocks by default — offer to open the port.
         if task_created:
             configure_firewall()
-            print_port_check_hint(script_path)
+            print_logon_start_hint(target_user)
 
     elif choice == "2":
         remove_task()
