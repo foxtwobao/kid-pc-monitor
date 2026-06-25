@@ -61,21 +61,62 @@ Run the web panel on a separate PC (your own computer). More secure since kids c
 ```bash
 git clone https://github.com/rookie7799/kid-pc-monitor.git
 cd kid-pc-monitor
-pip install -r requirements.txt
 
 # Run installer as administrator
 python scripts/install.py
 ```
 
+> **No `pip install` needed here.** The monitoring agent (`pc_control.py`) and
+> the installer use only the Python standard library, so kid PCs just need
+> Python itself. `requirements.txt` (Flask) is only for the machine that runs
+> the web panel — see step 2.
+
+> ⚠️ **IMPORTANT — enter the KID's account, not yours.** The installer must run
+> elevated, so it is usually launched from a **parent/admin** account. But the
+> monitor has to run inside the **kid's** session. When the installer asks for
+> the *"Kid's Windows username"*, it shows the elevated (admin) account it
+> detected as a hint — **if the kid logs in with a different account (the normal
+> case), type that account instead.** Only accept the detected name if the
+> account you are installing for is the very same one you are logged in as.
+>
+> The scheduled task is created to run as the account you type, triggered at
+> **that** user's logon. Get this wrong and the task installs successfully but
+> **never starts when the kid logs in, and clicking "Run" does nothing** — with
+> no error and no log, which is very hard to diagnose. So double-check this one
+> prompt. You can confirm it later in Task Scheduler → the task's **General** tab
+> → *"When running the task, use the following user account"* should show the
+> **kid's** account.
+
 2. **On your PC (Windows or macOS; for Linux, see the Linux parent steps below):**
+
+The web panel needs Flask. Best practice is to install it into an isolated
+**virtual environment** rather than your system Python, so dependencies don't
+clash with other projects:
+
 ```bash
 git clone https://github.com/rookie7799/kid-pc-monitor.git
-cd kid-pc-monitor/src
-pip install -r ../requirements.txt
+cd kid-pc-monitor
+
+# Create and activate a virtual environment (best practice)
+python -m venv .venv
+.venv\Scripts\activate        # Windows (PowerShell or cmd)
+# source .venv/bin/activate   # macOS / Linux
+
+pip install -r requirements.txt
+
+cd src
 python web_panel.py
 
 # Open in browser: http://YOUR-PC-IP:5000
 ```
+
+> **Prefer conda?** Use a conda environment instead of `venv` — ready to
+> copy‑paste:
+> ```bash
+> conda create -y -n kid-pc-monitor python=3.12
+> conda activate kid-pc-monitor
+> pip install -r requirements.txt
+> ```
 
 **Linux parent machine:** The web panel does not require `pywin32`; `requirements.txt` installs it only on Windows. From the repo root:
 
@@ -118,6 +159,10 @@ pip install -r requirements.txt
 python scripts/install.py           # Installs pc_control
 python scripts/install_web_panel.py # Installs web panel
 ```
+
+> ⚠️ When `install.py` asks for the *"Kid's Windows username"*, enter the
+> **standard account the child logs in with**, not the admin account you used to
+> run the installer. See the boxed note under Option A for why this matters.
 
 2. **On your phone:**
    - Open browser and go to `http://KIDS-PC-IP:5000`
@@ -202,6 +247,22 @@ This means restrictions **survive PC restarts** - kids can't bypass by rebooting
 
 ## 🔧 Troubleshooting
 
+### Verify the agent is listening (port 9999)
+> **The agent only starts after the kid logs in.** It runs inside the kid's
+> desktop session, so right after installation — while you're still signed in as
+> the admin — it is **not** running yet, and that's expected. Log in as the
+> **kid's** account first (or, if that account is already signed in, run
+> `schtasks /run /tn "KidPCMonitor"`).
+
+Once logged in as the kid, confirm the agent is listening:
+
+```cmd
+netstat -an | findstr 9999
+```
+
+You should see a line like `TCP    0.0.0.0:9999    0.0.0.0:0    LISTENING`. If
+nothing shows up, see the task-troubleshooting note below.
+
 ### "PC shows as Unknown"
 - Add custom names in configuration
 - Check Windows Firewall settings
@@ -217,6 +278,19 @@ This means restrictions **survive PC restarts** - kids can't bypass by rebooting
 - Restart pc_control.py
 - Check if LogonUI.exe detection works
 - See logs in console window
+
+### "Task installed but the agent never runs (port 9999 not listening; clicking Run does nothing)"
+- Almost always the **wrong user account**: the scheduled task was created for
+  the admin/parent account used to run the installer, not the kid's account, so
+  it never triggers at the kid's logon. Open Task Scheduler → the **KidPCMonitor**
+  task → **General** tab and check *"When running the task, use the following
+  user account"*. If it isn't the **kid's** account, re-run `python scripts/install.py`
+  as administrator and enter the **kid's** username when prompted.
+- It runs when you start it manually but not as a task: that confirms the above —
+  manual runs use *your* logged-in session, the task uses the account it was
+  created for.
+- Check the agent's logs in the **`src` folder** (the task's working directory):
+  `pc_control.log` (look for `Server started on port 9999`) and `pc_control.out.log`.
 
 ## 🛡️ Security Notes
 

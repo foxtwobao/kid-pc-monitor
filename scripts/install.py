@@ -3,80 +3,105 @@ import os
 import sys
 from pathlib import Path
 
-def get_script_path():
-    """Get the path to pc_control.py from user"""
-    print("📁 Where is pc_control.py located?")
-    print("\nOptions:")
-    print("1. Current directory")
-    print("2. Same directory as this installer")
-    print("3. Enter custom path")
-    
-    choice = input("\nChoice (1-3): ").strip()
-    
-    if choice == "1":
-        script_path = os.path.abspath("pc_control.py")
-    elif choice == "2":
-        script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pc_control.py")
-    else:
-        while True:
-            custom_path = input("\nEnter full path to pc_control.py: ").strip()
-            # Remove quotes if user copied from explorer
-            custom_path = custom_path.strip('"').strip("'")
-            
-            if os.path.exists(custom_path) and custom_path.endswith('.py'):
-                script_path = os.path.abspath(custom_path)
-                break
-            else:
-                print("❌ File not found or not a .py file. Please try again.")
-    
-    # Verify the file exists
-    if not os.path.exists(script_path):
-        print(f"\n❌ Error: Could not find {script_path}")
-        print("Please make sure pc_control.py exists in the specified location.")
-        return None
-    
-    print(f"\n✅ Found: {script_path}")
-    return script_path
+# Port the pc_control agent listens on for the parent web panel to connect to.
+# Must match RemoteControlServer's default port in src/pc_control.py.
+AGENT_PORT = 9999
+FIREWALL_RULE_NAME = "Kid PC Monitor (agent)"
 
-def create_task_with_power_settings():
+def find_pc_control():
+    """Locate pc_control.py relative to this installer.
+
+    The repo layout is fixed: this script lives in scripts/ and pc_control.py
+    lives in src/, so we can find it without asking the user. We also check a
+    couple of fallback locations in case the files were moved.
+    """
+    installer_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(installer_dir, "..", "src", "pc_control.py"),  # repo layout
+        os.path.join(installer_dir, "pc_control.py"),               # alongside installer
+        os.path.join(os.getcwd(), "pc_control.py"),                 # current directory
+    ]
+    for candidate in candidates:
+        candidate = os.path.abspath(candidate)
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+def get_script_path():
+    """Get the path to pc_control.py, auto-detecting when possible."""
+    script_path = find_pc_control()
+
+    if script_path:
+        print(f"✅ Found pc_control.py: {script_path}")
+        return script_path
+
+    # Auto-detection failed — fall back to asking the user.
+    print("⚠️  Could not auto-detect pc_control.py.")
+    while True:
+        custom_path = input("\nEnter full path to pc_control.py: ").strip()
+        # Remove quotes if user copied from explorer
+        custom_path = custom_path.strip('"').strip("'")
+
+        if os.path.exists(custom_path) and custom_path.endswith('.py'):
+            return os.path.abspath(custom_path)
+        else:
+            print("❌ File not found or not a .py file. Please try again.")
+
+def get_target_user():
+    """Ask which user account the monitor should run under."""
+    elevated_user = os.getenv('USERNAME') or ''
+    print("\n👤 Which Windows account should be monitored?")
+    print(f"   This is the account the kid logs in with — NOT the admin")
+    print(f"   account running this installer (currently '{elevated_user}').")
+    while True:
+        target = input("\nKid's Windows username: ").strip()
+        if not target:
+            if not elevated_user:
+                print("❌ No username entered and USERNAME env var is not set. Please type the account name.")
+                continue
+            print(f"⚠️  No username entered; falling back to '{elevated_user}'.")
+            target = elevated_user
+        result = subprocess.run(['net', 'user', target], capture_output=True, text=True)
+        if result.returncode == 0:
+            return target
+        print(f"❌ Account '{target}' not found on this PC. Check the spelling and try again.")
+        print(f"   (Run 'net user' in a command prompt to list local accounts.)")
+
+def create_task_with_power_settings(script_path, target_user):
     """Create scheduled task that runs even on battery power"""
-    
-    # Get script path from user
-    script_path = get_script_path()
-    if not script_path:
-        return False
-    
-    pythonw_path = sys.executable.replace('python.exe', 'pythonw.exe')
+    pythonw_path = str(Path(sys.executable).parent / 'pythonw.exe')
     task_name = "KidPCMonitor"
-    current_user = os.getenv('USERNAME')
-    
+
     # Show what we're about to do
     print(f"\n📋 Task Configuration:")
     print(f"   Script: {script_path}")
     print(f"   Python: {pythonw_path}")
     print(f"   Task Name: {task_name}")
-    print(f"   User Account: {current_user}")
-    
+    print(f"   Monitored account: {target_user}")
+
     confirm = input("\nProceed with these settings? (y/n): ").lower()
     if confirm != 'y':
         print("❌ Setup cancelled.")
         return False
-    
+
     # PowerShell script to create task with specific power settings
     ps_script = f'''
     $ErrorActionPreference = 'Stop'
     try {{
         # Create the action
         $action = New-ScheduledTaskAction -Execute "{pythonw_path}" -Argument "{script_path}" -WorkingDirectory "{os.path.dirname(script_path)}"
-        
-        # Create multiple triggers
+
+        # Trigger when the monitored user logs on (scoped to that account so it
+        # fires for the kid's session, not the admin's). An AtStartup trigger is
+        # useless here because an interactive token only exists after logon.
         $triggers = @(
-            (New-ScheduledTaskTrigger -AtStartup),
-            (New-ScheduledTaskTrigger -AtLogon)
+            (New-ScheduledTaskTrigger -AtLogon -User "{target_user}")
         )
-        
-        # Create principal (run with current user)
-        $principal = New-ScheduledTaskPrincipal -UserId "{current_user}" -LogonType Interactive -RunLevel Highest
+
+        # Run as the monitored (kid) account. It's a standard user, so use the
+        # Limited run level — Highest would request an elevation it can't grant
+        # and can stop the task from starting.
+        $principal = New-ScheduledTaskPrincipal -UserId "{target_user}" -LogonType Interactive -RunLevel Limited
         
         # Create settings with power options
         $settings = New-ScheduledTaskSettingsSet `
@@ -134,8 +159,8 @@ def create_task_with_power_settings():
             
             if verify_result.returncode == 0:
                 print("\n✅ Task successfully created and verified!")
-                print(f"   - Triggers: At Startup + At Logon")
-                print(f"   - Running as: {current_user}")
+                print(f"   - Trigger: At logon of {target_user}")
+                print(f"   - Running as: {target_user}")
                 print("\nYou can verify in Task Scheduler (taskschd.msc)")
                 return True
             else:
@@ -152,20 +177,16 @@ def create_task_with_power_settings():
         print(f"\n❌ Unexpected error: {e}")
         return False
     
-def create_task_simple_schtasks():
+def create_task_simple_schtasks(script_path, target_user):
     """Alternative using schtasks with XML template"""
-    
-    # Get script path from user
-    script_path = get_script_path()
-    if not script_path:
-        return False
-    
-    python_path = sys.executable
+    pythonw_path = str(Path(sys.executable).parent / 'pythonw.exe')
     task_name = "KidPCMonitor"
-    
+
     print(f"\n📋 Creating task with XML method...")
-    
-    # Create XML with proper power settings
+
+    # Create XML with proper power settings. The trigger and principal are both
+    # scoped to the monitored (kid) account, and run at the Limited level since
+    # it's a standard, non-elevated user.
     xml_content = f'''<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -174,12 +195,14 @@ def create_task_simple_schtasks():
   <Triggers>
     <LogonTrigger>
       <Enabled>true</Enabled>
+      <UserId>{target_user}</UserId>
     </LogonTrigger>
   </Triggers>
   <Principals>
     <Principal id="Author">
+      <UserId>{target_user}</UserId>
       <LogonType>InteractiveToken</LogonType>
-      <RunLevel>HighestAvailable</RunLevel>
+      <RunLevel>LeastPrivilege</RunLevel>
     </Principal>
   </Principals>
   <Settings>
@@ -207,29 +230,26 @@ def create_task_simple_schtasks():
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>{python_path}</Command>
+      <Command>{pythonw_path}</Command>
       <Arguments>"{script_path}"</Arguments>
       <WorkingDirectory>{os.path.dirname(script_path)}</WorkingDirectory>
     </Exec>
   </Actions>
 </Task>'''
     
+    xml_path = os.path.join(os.path.dirname(script_path), 'task_config.xml')
     try:
-        # Write XML to temp file
-        with open('task_config.xml', 'w', encoding='utf-16') as f:
-            f.write(xml_content)
-        
-        # Import the task
-        result = subprocess.run(
-            f'schtasks /create /tn "{task_name}" /xml "task_config.xml" /f',
-            shell=True,
-            capture_output=True,
-            text=True
-        )
-        
-        # Clean up
-        os.remove('task_config.xml')
-        
+        try:
+            with open(xml_path, 'w', encoding='utf-16') as f:
+                f.write(xml_content)
+            result = subprocess.run(
+                f'schtasks /create /tn "{task_name}" /xml "{xml_path}" /f',
+                shell=True, capture_output=True, text=True
+            )
+        finally:
+            if os.path.exists(xml_path):
+                os.remove(xml_path)
+
         if result.returncode == 0:
             print("\n✅ Task created successfully with battery settings!")
             verify_task_settings(task_name)
@@ -237,7 +257,7 @@ def create_task_simple_schtasks():
         else:
             print(f"\n❌ Error: {result.stderr}")
             return False
-            
+
     except Exception as e:
         print(f"\n❌ Error: {e}")
         return False
@@ -265,6 +285,85 @@ def check_admin():
         return ctypes.windll.shell32.IsUserAnAdmin()
     except:
         return False
+
+def print_logon_start_hint(target_user):
+    """Explain when the agent actually starts.
+
+    The task runs with an Interactive logon type and the agent needs the kid's
+    desktop session (it shows dialogs, locks the workstation and watches the
+    foreground window). It therefore can't run while only the admin is logged
+    in — it starts on the kid's next logon via the AtLogon trigger. Checking
+    port 9999 right after install would show nothing, which is expected.
+    """
+    print("\n" + "=" * 45)
+    print(f"💡 The agent starts automatically when '{target_user}' next logs in.")
+    print(f"   It runs inside that account's desktop session, so it won't be")
+    print(f"   running yet while you're signed in as the admin — that's normal.")
+    print(f"   Log in as '{target_user}' to start it (or, if that account is")
+    print(f"   already signed in, run: schtasks /run /tn \"KidPCMonitor\").")
+    print("=" * 45)
+
+def manual_firewall_command():
+    """The netsh command a user can run by hand to open the agent port."""
+    return (
+        f'netsh advfirewall firewall add rule '
+        f'name="{FIREWALL_RULE_NAME}" dir=in action=allow '
+        f'protocol=TCP localport={AGENT_PORT}'
+    )
+
+def configure_firewall():
+    """Add a Windows Firewall inbound rule for the agent port.
+
+    The agent listens on AGENT_PORT so the parent web panel can connect to it.
+    Without an inbound rule Windows Firewall blocks those connections, so the
+    panel can't reach the kid PC. We make this idempotent by deleting any rule
+    with the same name first, then adding a fresh one.
+    """
+    print(f"\n🔥 Windows Firewall: the agent listens on TCP port {AGENT_PORT} so")
+    print("   the parent web panel can connect to this PC.")
+    print("   Incoming connections must be allowed through the firewall.")
+
+    confirm = input(
+        f"\nAdd a firewall rule to allow incoming TCP port {AGENT_PORT}? (y/n): "
+    ).lower()
+    if confirm != 'y':
+        print("\nℹ️  Skipped. To allow it later, run this in an admin prompt:")
+        print(f"   {manual_firewall_command()}")
+        return False
+
+    # Remove any pre-existing rule with this name so we don't stack duplicates.
+    subprocess.run(
+        f'netsh advfirewall firewall delete rule name="{FIREWALL_RULE_NAME}"',
+        shell=True, capture_output=True, text=True
+    )
+
+    result = subprocess.run(
+        manual_firewall_command(), shell=True, capture_output=True, text=True
+    )
+
+    if result.returncode == 0:
+        print(f"\n✅ Firewall rule added: incoming TCP port {AGENT_PORT} allowed.")
+        return True
+    else:
+        print("\n❌ Could not add firewall rule automatically.")
+        if result.stdout.strip():
+            print(result.stdout.strip())
+        if result.stderr.strip():
+            print(result.stderr.strip())
+        print("\nYou can add it manually from an admin prompt:")
+        print(f"   {manual_firewall_command()}")
+        return False
+
+def remove_firewall_rule():
+    """Remove the agent firewall rule (used when removing the task)."""
+    result = subprocess.run(
+        f'netsh advfirewall firewall delete rule name="{FIREWALL_RULE_NAME}"',
+        shell=True, capture_output=True, text=True
+    )
+    if result.returncode == 0:
+        print(f"✅ Firewall rule '{FIREWALL_RULE_NAME}' removed.")
+    else:
+        print("ℹ️  No matching firewall rule found.")
 
 def remove_task():
     """Remove existing task"""
@@ -302,19 +401,30 @@ if __name__ == "__main__":
     
     if choice == "1":
         print("\nCreating scheduled task with battery-friendly settings...\n")
-        
+        script_path = get_script_path()
+        target_user = get_target_user()
+
         # Try PowerShell method first (most reliable)
-        if create_task_with_power_settings():
+        task_created = create_task_with_power_settings(script_path, target_user)
+        if task_created:
             print("\n✅ Setup complete! Task will run even on laptops using battery.")
         else:
             print("\nTrying alternative method...")
-            if create_task_simple_schtasks():
+            task_created = create_task_simple_schtasks(script_path, target_user)
+            if task_created:
                 print("\n✅ Setup complete using XML method!")
             else:
                 print("\n❌ Could not create task. Please check the error messages above.")
-    
+
+        # The task only matters if the parent web panel can reach the agent,
+        # which Windows Firewall blocks by default — offer to open the port.
+        if task_created:
+            configure_firewall()
+            print_logon_start_hint(target_user)
+
     elif choice == "2":
         remove_task()
+        remove_firewall_rule()
     
     else:
         print("\nExiting...")
