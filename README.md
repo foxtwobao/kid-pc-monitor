@@ -247,6 +247,22 @@ This means restrictions **survive PC restarts** - kids can't bypass by rebooting
 
 ## 🔧 Troubleshooting
 
+### Verify the agent is listening (port 9999)
+> **The agent only starts after the kid logs in.** It runs inside the kid's
+> desktop session, so right after installation — while you're still signed in as
+> the admin — it is **not** running yet, and that's expected. Log in as the
+> **kid's** account first (or, if that account is already signed in, run
+> `schtasks /run /tn "KidPCMonitor"`).
+
+Once logged in as the kid, confirm the agent is listening:
+
+```cmd
+netstat -an | findstr 9999
+```
+
+You should see a line like `TCP    0.0.0.0:9999    0.0.0.0:0    LISTENING`. If
+nothing shows up, see the task-troubleshooting note below.
+
 ### "PC shows as Unknown"
 - Add custom names in configuration
 - Check Windows Firewall settings
