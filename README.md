@@ -61,11 +61,15 @@ Run the web panel on a separate PC (your own computer). More secure since kids c
 ```bash
 git clone https://github.com/rookie7799/kid-pc-monitor.git
 cd kid-pc-monitor
-pip install -r requirements.txt
 
 # Run installer as administrator
 python scripts/install.py
 ```
+
+> **No `pip install` needed here.** The monitoring agent (`pc_control.py`) and
+> the installer use only the Python standard library, so kid PCs just need
+> Python itself. `requirements.txt` (Flask) is only for the machine that runs
+> the web panel — see step 2.
 
 > ⚠️ **IMPORTANT — enter the KID's account, not yours.** The installer must run
 > elevated, so it is usually launched from a **parent/admin** account. But the
@@ -84,14 +88,35 @@ python scripts/install.py
 > **kid's** account.
 
 2. **On your PC (Windows or macOS; for Linux, see the Linux parent steps below):**
+
+The web panel needs Flask. Best practice is to install it into an isolated
+**virtual environment** rather than your system Python, so dependencies don't
+clash with other projects:
+
 ```bash
 git clone https://github.com/rookie7799/kid-pc-monitor.git
-cd kid-pc-monitor/src
-pip install -r ../requirements.txt
+cd kid-pc-monitor
+
+# Create and activate a virtual environment (best practice)
+python -m venv .venv
+.venv\Scripts\activate        # Windows (PowerShell or cmd)
+# source .venv/bin/activate   # macOS / Linux
+
+pip install -r requirements.txt
+
+cd src
 python web_panel.py
 
 # Open in browser: http://YOUR-PC-IP:5000
 ```
+
+> **Prefer conda?** Use a conda environment instead of `venv` — ready to
+> copy‑paste:
+> ```bash
+> conda create -y -n kid-pc-monitor python=3.12
+> conda activate kid-pc-monitor
+> pip install -r requirements.txt
+> ```
 
 **Linux parent machine:** The web panel does not require `pywin32`; `requirements.txt` installs it only on Windows. From the repo root:
 
