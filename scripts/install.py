@@ -48,35 +48,29 @@ def get_script_path():
             print("❌ File not found or not a .py file. Please try again.")
 
 def get_target_user():
-    """Ask which user account the monitor should run under.
-
-    The installer runs elevated — typically as a parent/admin account — but the
-    task must run inside the *monitored* user's session, usually the kid's
-    standard account. os.getenv('USERNAME') here returns the elevated user, so
-    defaulting to it would bind the task to the wrong account and it would never
-    trigger when the kid logs in. Ask explicitly instead.
-    """
-    elevated_user = os.getenv('USERNAME')
+    """Ask which user account the monitor should run under."""
+    elevated_user = os.getenv('USERNAME') or ''
     print("\n👤 Which Windows account should be monitored?")
     print(f"   This is the account the kid logs in with — NOT the admin")
     print(f"   account running this installer (currently '{elevated_user}').")
-    target = input("\nKid's Windows username: ").strip()
-    if not target:
-        print(f"⚠️  No username entered; falling back to '{elevated_user}'.")
-        return elevated_user
-    return target
+    while True:
+        target = input("\nKid's Windows username: ").strip()
+        if not target:
+            if not elevated_user:
+                print("❌ No username entered and USERNAME env var is not set. Please type the account name.")
+                continue
+            print(f"⚠️  No username entered; falling back to '{elevated_user}'.")
+            target = elevated_user
+        result = subprocess.run(['net', 'user', target], capture_output=True, text=True)
+        if result.returncode == 0:
+            return target
+        print(f"❌ Account '{target}' not found on this PC. Check the spelling and try again.")
+        print(f"   (Run 'net user' in a command prompt to list local accounts.)")
 
-def create_task_with_power_settings():
+def create_task_with_power_settings(script_path, target_user):
     """Create scheduled task that runs even on battery power"""
-
-    # Get script path from user
-    script_path = get_script_path()
-    if not script_path:
-        return False
-
-    pythonw_path = sys.executable.replace('python.exe', 'pythonw.exe')
+    pythonw_path = str(Path(sys.executable).parent / 'pythonw.exe')
     task_name = "KidPCMonitor"
-    target_user = get_target_user()
 
     # Show what we're about to do
     print(f"\n📋 Task Configuration:")
@@ -183,19 +177,10 @@ def create_task_with_power_settings():
         print(f"\n❌ Unexpected error: {e}")
         return False
     
-def create_task_simple_schtasks():
+def create_task_simple_schtasks(script_path, target_user):
     """Alternative using schtasks with XML template"""
-    
-    # Get script path from user
-    script_path = get_script_path()
-    if not script_path:
-        return False
-    
-    # Use pythonw so no console window appears in the kid's session, matching
-    # the primary (PowerShell) method.
-    pythonw_path = sys.executable.replace('python.exe', 'pythonw.exe')
+    pythonw_path = str(Path(sys.executable).parent / 'pythonw.exe')
     task_name = "KidPCMonitor"
-    target_user = get_target_user()
 
     print(f"\n📋 Creating task with XML method...")
 
@@ -252,22 +237,19 @@ def create_task_simple_schtasks():
   </Actions>
 </Task>'''
     
+    xml_path = os.path.join(os.path.dirname(script_path), 'task_config.xml')
     try:
-        # Write XML to temp file
-        with open('task_config.xml', 'w', encoding='utf-16') as f:
-            f.write(xml_content)
-        
-        # Import the task
-        result = subprocess.run(
-            f'schtasks /create /tn "{task_name}" /xml "task_config.xml" /f',
-            shell=True,
-            capture_output=True,
-            text=True
-        )
-        
-        # Clean up
-        os.remove('task_config.xml')
-        
+        try:
+            with open(xml_path, 'w', encoding='utf-16') as f:
+                f.write(xml_content)
+            result = subprocess.run(
+                f'schtasks /create /tn "{task_name}" /xml "{xml_path}" /f',
+                shell=True, capture_output=True, text=True
+            )
+        finally:
+            if os.path.exists(xml_path):
+                os.remove(xml_path)
+
         if result.returncode == 0:
             print("\n✅ Task created successfully with battery settings!")
             verify_task_settings(task_name)
@@ -275,7 +257,7 @@ def create_task_simple_schtasks():
         else:
             print(f"\n❌ Error: {result.stderr}")
             return False
-            
+
     except Exception as e:
         print(f"\n❌ Error: {e}")
         return False
@@ -315,13 +297,14 @@ def port_check_command():
         # Linux and other Unixes: ss is the modern default.
         return f'ss -tlnp | grep {AGENT_PORT}'
 
-def print_port_check_hint():
+def print_port_check_hint(script_path=None):
     """Tell the user how to verify the agent is actually listening."""
+    pc_control_path = script_path or find_pc_control() or 'src/pc_control.py'
     print("\n" + "=" * 45)
     print(f"💡 To verify the agent is listening on port {AGENT_PORT}, run:")
     print(f"   {port_check_command()}")
     print(f"\n   If nothing shows up, the agent isn't running. Run it in a")
-    print(f"   console to see why:  python \"{find_pc_control() or 'src/pc_control.py'}\"")
+    print(f"   console to see why:  python \"{pc_control_path}\"")
     print("=" * 45)
 
 def manual_firewall_command():
@@ -359,10 +342,7 @@ def configure_firewall():
     )
 
     result = subprocess.run(
-        f'netsh advfirewall firewall add rule '
-        f'name="{FIREWALL_RULE_NAME}" dir=in action=allow '
-        f'protocol=TCP localport={AGENT_PORT}',
-        shell=True, capture_output=True, text=True
+        manual_firewall_command(), shell=True, capture_output=True, text=True
     )
 
     if result.returncode == 0:
@@ -425,14 +405,16 @@ if __name__ == "__main__":
     
     if choice == "1":
         print("\nCreating scheduled task with battery-friendly settings...\n")
+        script_path = get_script_path()
+        target_user = get_target_user()
 
         # Try PowerShell method first (most reliable)
-        task_created = create_task_with_power_settings()
+        task_created = create_task_with_power_settings(script_path, target_user)
         if task_created:
             print("\n✅ Setup complete! Task will run even on laptops using battery.")
         else:
             print("\nTrying alternative method...")
-            task_created = create_task_simple_schtasks()
+            task_created = create_task_simple_schtasks(script_path, target_user)
             if task_created:
                 print("\n✅ Setup complete using XML method!")
             else:
@@ -442,7 +424,7 @@ if __name__ == "__main__":
         # which Windows Firewall blocks by default — offer to open the port.
         if task_created:
             configure_firewall()
-            print_port_check_hint()
+            print_port_check_hint(script_path)
 
     elif choice == "2":
         remove_task()
