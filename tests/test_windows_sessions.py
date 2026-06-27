@@ -4,6 +4,12 @@ import sys
 
 from src import windows_sessions
 from src.windows_sessions import (
+    WTS_REMOTE_CONNECT,
+    WTS_REMOTE_DISCONNECT,
+    WTS_SESSION_LOCK,
+    WTS_SESSION_LOGOFF,
+    WTS_SESSION_UNLOCK,
+    SessionActivityTracker,
     active_remote_session_ids,
     active_session_ids,
     active_session_ids_for_users,
@@ -65,6 +71,48 @@ def test_session_has_process_matches_name_and_session():
 
     assert session_has_process(1, "LogonUI.exe", lambda: processes) is True
     assert session_has_process(2, "LogonUI.exe", lambda: processes) is False
+
+
+def test_session_activity_tracker_stops_countable_user_while_locked():
+    tracker = SessionActivityTracker(
+        session_enumerator=lambda: [{"session_id": 3, "state": 0, "station_name": "console"}],
+        username_query=lambda session_id: "DESKTOP\\Phil" if session_id == 3 else "",
+    )
+
+    tracker.refresh()
+    assert tracker.current_username() == "DESKTOP\\Phil"
+
+    tracker.handle_session_change(WTS_SESSION_LOCK, 3)
+    assert tracker.current_username() == ""
+
+    tracker.handle_session_change(WTS_SESSION_UNLOCK, 3)
+    assert tracker.current_username() == "DESKTOP\\Phil"
+
+
+def test_session_activity_tracker_stops_countable_user_while_disconnected():
+    tracker = SessionActivityTracker(
+        session_enumerator=lambda: [{"session_id": 7, "state": 0, "station_name": "rdp-tcp#1"}],
+        username_query=lambda session_id: "DESKTOP\\Phil" if session_id == 7 else "",
+    )
+
+    tracker.refresh()
+    tracker.handle_session_change(WTS_REMOTE_DISCONNECT, 7)
+    assert tracker.current_username() == ""
+
+    tracker.handle_session_change(WTS_REMOTE_CONNECT, 7)
+    assert tracker.current_username() == "DESKTOP\\Phil"
+
+
+def test_session_activity_tracker_removes_logged_off_session():
+    tracker = SessionActivityTracker(
+        session_enumerator=lambda: [{"session_id": 3, "state": 0, "station_name": "console"}],
+        username_query=lambda session_id: "DESKTOP\\Phil" if session_id == 3 else "",
+    )
+
+    tracker.refresh()
+    tracker.handle_session_change(WTS_SESSION_LOGOFF, 3)
+
+    assert tracker.current_username() == ""
 
 
 def test_active_remote_session_ids_selects_active_rdp_sessions_only():

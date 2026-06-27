@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import ctypes
+from dataclasses import dataclass
 import getpass
 import sys
+import threading
 from ctypes import wintypes
 
 
@@ -10,6 +12,17 @@ WTS_CURRENT_SERVER_HANDLE = 0
 WTS_USER_NAME = 5
 WTS_DOMAIN_NAME = 7
 WTS_ACTIVE = 0
+WTS_CONSOLE_CONNECT = 1
+WTS_CONSOLE_DISCONNECT = 2
+WTS_REMOTE_CONNECT = 3
+WTS_REMOTE_DISCONNECT = 4
+WTS_SESSION_LOGON = 5
+WTS_SESSION_LOGOFF = 6
+WTS_SESSION_LOCK = 7
+WTS_SESSION_UNLOCK = 8
+
+CONNECT_EVENTS = {WTS_CONSOLE_CONNECT, WTS_REMOTE_CONNECT, WTS_SESSION_LOGON, WTS_SESSION_UNLOCK}
+DISCONNECT_EVENTS = {WTS_CONSOLE_DISCONNECT, WTS_REMOTE_DISCONNECT, WTS_SESSION_LOGOFF, WTS_SESSION_LOCK}
 
 
 class WTS_SESSION_INFO(ctypes.Structure):
@@ -52,13 +65,11 @@ def current_interactive_username() -> str:
     if sys.platform != "win32":
         return getpass.getuser()
 
-    username = select_interactive_username(enumerate_sessions(), _query_session_username, is_session_unlocked)
+    username = select_interactive_username(enumerate_sessions(), _query_session_username)
     if username:
         return username
 
     session_id = ctypes.windll.kernel32.WTSGetActiveConsoleSessionId()
-    if not is_session_unlocked(session_id):
-        return ""
     return _query_session_username(session_id)
 
 
@@ -135,6 +146,79 @@ def is_session_unlocked(session_id: int) -> bool:
     if sys.platform != "win32":
         return True
     return not session_has_process(session_id, "LogonUI.exe")
+
+
+@dataclass
+class SessionActivity:
+    session_id: int
+    username: str = ""
+    station_name: str = ""
+    active: bool = False
+    connected: bool = False
+    locked: bool = False
+
+    def is_countable(self) -> bool:
+        return bool(self.username and self.active and self.connected and not self.locked)
+
+
+class SessionActivityTracker:
+    """Track countable Windows sessions from WTS session change events."""
+
+    def __init__(self, session_enumerator=enumerate_sessions, username_query=_query_session_username):
+        self.session_enumerator = session_enumerator
+        self.username_query = username_query
+        self._sessions: dict[int, SessionActivity] = {}
+        self._lock = threading.RLock()
+
+    def refresh(self) -> None:
+        sessions = self.session_enumerator()
+        seen_session_ids = set()
+        with self._lock:
+            for session in sessions:
+                session_id = int(session["session_id"])
+                seen_session_ids.add(session_id)
+                active = session.get("state") == WTS_ACTIVE
+                current = self._sessions.get(session_id, SessionActivity(session_id=session_id))
+                username = self.username_query(session_id) if active else current.username
+                self._sessions[session_id] = SessionActivity(
+                    session_id=session_id,
+                    username=username,
+                    station_name=str(session.get("station_name", "")),
+                    active=active,
+                    connected=active,
+                    locked=current.locked,
+                )
+            for session_id in list(self._sessions):
+                if session_id not in seen_session_ids:
+                    self._sessions.pop(session_id, None)
+
+    def handle_session_change(self, event_type: int, session_id: int) -> None:
+        session_id = int(session_id)
+        with self._lock:
+            current = self._sessions.get(session_id, SessionActivity(session_id=session_id))
+            if event_type == WTS_SESSION_LOGOFF:
+                self._sessions.pop(session_id, None)
+                return
+            username = self.username_query(session_id) or current.username
+            if event_type in CONNECT_EVENTS:
+                current.active = True
+                current.connected = True
+                current.username = username
+            if event_type in DISCONNECT_EVENTS:
+                current.active = False
+                current.connected = False
+            if event_type == WTS_SESSION_LOCK:
+                current.locked = True
+            elif event_type in (WTS_SESSION_UNLOCK, WTS_SESSION_LOGON):
+                current.locked = False
+            self._sessions[session_id] = current
+
+    def current_username(self) -> str:
+        with self._lock:
+            for session in self._sessions.values():
+                if session.is_countable():
+                    return session.username
+        return ""
 
 
 def select_interactive_username(sessions: list[dict], query_username, query_unlocked=lambda _session_id: True) -> str:

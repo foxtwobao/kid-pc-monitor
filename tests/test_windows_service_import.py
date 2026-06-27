@@ -39,3 +39,27 @@ def test_build_core_uses_interactive_username_provider(monkeypatch, tmp_path):
     core = windows_service.build_core()
 
     assert core.username_provider() == "kid"
+
+
+def test_build_core_can_use_session_activity_tracker(monkeypatch, tmp_path):
+    import src.windows_service as windows_service
+
+    class FakeTracker:
+        def current_username(self):
+            return "DESKTOP\\Phil"
+
+    monkeypatch.setattr(windows_service, "POLICY_PATH", tmp_path / "policy.json")
+    monkeypatch.setattr(windows_service, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(windows_service, "HELPER_COMMAND_PATH", tmp_path / "helper_commands.jsonl")
+
+    core = windows_service.build_core(session_tracker=FakeTracker())
+
+    assert core.username_provider() == "DESKTOP\\Phil"
+
+
+def test_extract_session_change_session_id_accepts_pywin32_tuple():
+    import src.windows_service as windows_service
+
+    assert windows_service.extract_session_change_session_id((3,)) == 3
+    assert windows_service.extract_session_change_session_id(4) == 4
+    assert windows_service.extract_session_change_session_id(None) is None
