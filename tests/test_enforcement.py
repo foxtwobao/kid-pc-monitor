@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from src.enforcement import EnforcementDecision, evaluate_policy
+from src.kid_service import KidServiceCore
 from src.policy import BedtimeWindow, Policy
 from src.state_store import AgentState
 
@@ -89,3 +90,24 @@ def test_exempt_user_is_not_locked():
 
     assert decision.should_lock is False
     assert decision.reason is None
+
+
+def test_service_core_requests_lock_when_policy_says_lock(tmp_path):
+    sent_messages = []
+    policy_path = tmp_path / "policy.json"
+    state_path = tmp_path / "state.json"
+    policy = make_policy(limit=1)
+    policy_path.write_text(__import__("json").dumps(policy.to_dict()), encoding="utf-8")
+
+    core = KidServiceCore(
+        policy_path=policy_path,
+        state_path=state_path,
+        username_provider=lambda: "kid",
+        now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
+        helper_sender=sent_messages.append,
+    )
+    core.state = make_state(seconds=60)
+
+    core.tick()
+
+    assert sent_messages[-1] == {"type": "lock", "reason": "daily_limit"}
