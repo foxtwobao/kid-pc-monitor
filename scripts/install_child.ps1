@@ -15,6 +15,7 @@ function Invoke-KidPCMonitorNativeCommand {
         [scriptblock]$Command
     )
 
+    $global:LASTEXITCODE = 0
     & $Command
     if ($LASTEXITCODE -ne 0) {
         throw "$FailureMessage Exit code: $LASTEXITCODE"
@@ -42,8 +43,16 @@ function Install-KidPCMonitorPython {
     $installerPath = Join-Path $env:TEMP "kid-pc-monitor-python-installer.exe"
     Write-Host "Python 3.10+ was not found. Installing Python 3.12..."
     Invoke-WebRequest -UseBasicParsing -Uri $InstallerUrl -OutFile $installerPath
-    Invoke-KidPCMonitorNativeCommand -FailureMessage "Python installer failed." -Command {
-        & $installerPath /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1 Include_test=0
+    if (-not (Test-Path $installerPath)) {
+        throw "Python installer was not downloaded to $installerPath."
+    }
+    $installer = Start-Process `
+        -FilePath $installerPath `
+        -ArgumentList "/quiet", "InstallAllUsers=1", "PrependPath=1", "Include_pip=1", "Include_test=0" `
+        -Wait `
+        -PassThru
+    if ($installer.ExitCode -ne 0) {
+        throw "Python installer failed. Exit code: $($installer.ExitCode)"
     }
 }
 
