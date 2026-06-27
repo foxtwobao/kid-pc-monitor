@@ -3,7 +3,9 @@ from src.web_panel import (
     command_body_from_legacy,
     current_user_from_status,
     is_policy_command,
+    load_pending_commands,
     record_pending_command,
+    save_pending_commands,
     sync_pending_command,
     time_remaining_from_status,
 )
@@ -57,3 +59,31 @@ def test_sync_pending_command_removes_entry_after_success():
     assert synced is True
     assert calls == [("192.168.10.251", body)]
     assert "192.168.10.251" not in PENDING_COMMANDS
+
+
+def test_pending_commands_persist_to_disk(tmp_path):
+    PENDING_COMMANDS.clear()
+    pending_file = tmp_path / "pending.json"
+    body = command_body_from_legacy("SET_LIMIT:30")
+
+    record_pending_command("192.168.10.251", body, "offline", pending_file=pending_file)
+    PENDING_COMMANDS.clear()
+    load_pending_commands(pending_file)
+
+    assert PENDING_COMMANDS["192.168.10.251"]["body"] == body
+
+
+def test_sync_pending_command_updates_disk_after_success(tmp_path):
+    PENDING_COMMANDS.clear()
+    pending_file = tmp_path / "pending.json"
+    body = command_body_from_legacy("SET_LIMIT:30")
+    record_pending_command("192.168.10.251", body, "offline", pending_file=pending_file)
+
+    synced = sync_pending_command(
+        "192.168.10.251",
+        sender=lambda _ip, _body: (True, "ok"),
+        pending_file=pending_file,
+    )
+
+    assert synced is True
+    assert load_pending_commands(pending_file) == {}

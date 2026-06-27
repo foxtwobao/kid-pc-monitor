@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 
 from src.agent_auth import sign_message
+from src.state_store import atomic_write_json
 
 app = Flask(__name__)
 
@@ -15,6 +16,7 @@ app = Flask(__name__)
 discovered_pcs = {}
 last_scan_time = None
 PENDING_COMMANDS = {}
+PENDING_COMMANDS_FILE = os.environ.get("KID_PC_PENDING_COMMANDS_FILE", "pending_commands.json")
 
 # Custom PC names (optional) - Add your kids' PC names here
 CUSTOM_PC_NAMES = {
@@ -81,15 +83,34 @@ def is_policy_command(body):
     }
 
 
-def record_pending_command(ip, body, last_error):
+def load_pending_commands(pending_file=PENDING_COMMANDS_FILE):
+    pending_path = os.fspath(pending_file)
+    if not os.path.exists(pending_path):
+        return {}
+    try:
+        with open(pending_path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    PENDING_COMMANDS.clear()
+    PENDING_COMMANDS.update(data)
+    return PENDING_COMMANDS
+
+
+def save_pending_commands(pending_file=PENDING_COMMANDS_FILE):
+    atomic_write_json(pending_file, PENDING_COMMANDS)
+
+
+def record_pending_command(ip, body, last_error, pending_file=PENDING_COMMANDS_FILE):
     PENDING_COMMANDS[ip] = {
         "body": body,
         "last_error": last_error,
         "created_at": datetime.now().isoformat(),
     }
+    save_pending_commands(pending_file)
 
 
-def sync_pending_command(ip, sender=None):
+def sync_pending_command(ip, sender=None, pending_file=PENDING_COMMANDS_FILE):
     pending = PENDING_COMMANDS.get(ip)
     if not pending:
         return False
@@ -97,9 +118,14 @@ def sync_pending_command(ip, sender=None):
     success, response = sender(ip, pending["body"])
     if success:
         PENDING_COMMANDS.pop(ip, None)
+        save_pending_commands(pending_file)
         return True
     pending["last_error"] = response
+    save_pending_commands(pending_file)
     return False
+
+
+load_pending_commands()
 
 
 def send_signed_body(host, body, port=9999):
