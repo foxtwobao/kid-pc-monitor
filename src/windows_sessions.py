@@ -106,6 +106,33 @@ def active_session_ids(sessions: list[dict]) -> list[int]:
     return [int(session["session_id"]) for session in sessions if session.get("state") == WTS_ACTIVE]
 
 
+def _username_variants(username: str) -> set[str]:
+    normalized = username.strip()
+    variants = {normalized, normalized.lower()}
+    if "\\" in normalized:
+        short = normalized.rsplit("\\", 1)[1]
+        variants.update({short, short.lower()})
+    if "@" in normalized:
+        short = normalized.split("@", 1)[0]
+        variants.update({short, short.lower()})
+    return variants
+
+
+def _name_matches(configured: str, actual: str) -> bool:
+    return bool(_username_variants(configured) & _username_variants(actual))
+
+
+def active_session_ids_for_users(sessions: list[dict], usernames: list[str], query_username) -> list[int]:
+    session_ids = []
+    for session in sessions:
+        if session.get("state") != WTS_ACTIVE:
+            continue
+        session_username = query_username(int(session["session_id"]))
+        if session_username and any(_name_matches(username, session_username) for username in usernames):
+            session_ids.append(int(session["session_id"]))
+    return session_ids
+
+
 def _disconnect_session(session_id: int) -> None:
     ctypes.windll.wtsapi32.WTSDisconnectSession(
         WTS_CURRENT_SERVER_HANDLE,
@@ -125,4 +152,11 @@ def disconnect_active_sessions() -> None:
     if sys.platform != "win32":
         return
     for session_id in active_session_ids(enumerate_sessions()):
+        _disconnect_session(session_id)
+
+
+def disconnect_active_sessions_for_users(usernames: list[str]) -> None:
+    if sys.platform != "win32" or not usernames:
+        return
+    for session_id in active_session_ids_for_users(enumerate_sessions(), usernames, _query_session_username):
         _disconnect_session(session_id)

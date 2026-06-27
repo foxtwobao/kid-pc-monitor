@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import getpass
 import os
 from pathlib import Path
 import sys
@@ -13,6 +14,30 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.helper_ipc import decode_message, read_commands
+
+
+def _username_variants(username: str) -> set[str]:
+    normalized = username.strip()
+    variants = {normalized, normalized.lower()}
+    if "\\" in normalized:
+        short = normalized.rsplit("\\", 1)[1]
+        variants.update({short, short.lower()})
+    if "@" in normalized:
+        short = normalized.split("@", 1)[0]
+        variants.update({short, short.lower()})
+    return variants
+
+
+def _name_matches(configured: str, actual: str) -> bool:
+    return bool(_username_variants(configured) & _username_variants(actual))
+
+
+def message_targets_current_user(message: dict) -> bool:
+    users = message.get("users") or []
+    if not users:
+        return True
+    current_user = getpass.getuser()
+    return any(_name_matches(str(user), current_user) for user in users)
 
 
 def default_offset_path() -> Path:
@@ -59,6 +84,8 @@ def show_message(text: str, title: str = "Kid PC Monitor") -> None:
 
 
 def handle_message(message: dict) -> None:
+    if not message_targets_current_user(message):
+        return
     if message["type"] == "lock":
         lock_workstation()
     elif message["type"] == "warning":

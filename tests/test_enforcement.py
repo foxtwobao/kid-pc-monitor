@@ -118,14 +118,14 @@ def test_service_core_requests_lock_when_policy_says_lock(tmp_path):
         username_provider=lambda: "kid",
         now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
         helper_sender=sent_messages.append,
-        session_locker=lambda: locked_sessions.append(True),
+        session_locker=lambda users: locked_sessions.append(users),
     )
     core.state = make_state(seconds=60)
 
     core.tick()
 
-    assert sent_messages[-1] == {"type": "lock", "reason": "daily_limit"}
-    assert locked_sessions == [True]
+    assert sent_messages[-1] == {"type": "lock", "reason": "daily_limit", "users": ["kid"]}
+    assert locked_sessions == [["kid"]]
 
 
 def test_service_core_can_apply_limit_command_without_network_dependency(tmp_path):
@@ -213,16 +213,40 @@ def test_service_core_manual_lock_disconnects_remote_sessions(tmp_path):
         username_provider=lambda: "kid",
         now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
         helper_sender=sent_messages.append,
-        session_locker=lambda: locked_sessions.append(True),
+        session_locker=lambda users: locked_sessions.append(users),
         event_logger=lambda event_type, data: events.append((event_type, data)),
     )
 
     response = core.handle_lock({"reason": "manual"})
 
     assert response == {"lock_requested": True, "reason": "manual"}
-    assert sent_messages == [{"type": "lock", "reason": "manual"}]
-    assert locked_sessions == [True]
+    assert sent_messages == [{"type": "lock", "reason": "manual", "users": ["kid"]}]
+    assert locked_sessions == [["kid"]]
     assert events == [("lock.requested", {"reason": "manual"})]
+
+
+def test_service_core_manual_lock_targets_monitored_user_not_admin(tmp_path):
+    sent_messages = []
+    locked_sessions = []
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(__import__("json").dumps(make_policy(limit=999).to_dict()), encoding="utf-8")
+    core = KidServiceCore(
+        policy_path=policy_path,
+        state_path=tmp_path / "state.json",
+        username_provider=lambda: "DESKTOP\\foxandcat",
+        now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
+        helper_sender=sent_messages.append,
+        session_locker=lambda users: locked_sessions.append(users),
+    )
+
+    core.handle_lock({"reason": "manual"})
+    core.tick()
+
+    assert sent_messages == [
+        {"type": "lock", "reason": "manual", "users": ["kid"]},
+        {"type": "lock", "reason": "manual", "users": ["kid"]},
+    ]
+    assert locked_sessions == [["kid"], ["kid"]]
 
 
 def test_service_core_can_request_shutdown(tmp_path):
@@ -333,7 +357,7 @@ def test_service_core_locks_after_locally_accounted_usage_reaches_limit(tmp_path
     core.tick()
 
     assert core.state.usage_seconds_by_user["kid"] == 60
-    assert sent_messages[-1] == {"type": "lock", "reason": "daily_limit"}
+    assert sent_messages[-1] == {"type": "lock", "reason": "daily_limit", "users": ["kid"]}
 
 
 def test_service_core_sends_lock_once_while_limit_remains_active(tmp_path):
@@ -363,8 +387,8 @@ def test_service_core_sends_lock_once_while_limit_remains_active(tmp_path):
     core.tick()
 
     assert [message for message in sent_messages if message["type"] == "lock"] == [
-        {"type": "lock", "reason": "daily_limit"},
-        {"type": "lock", "reason": "daily_limit"},
+        {"type": "lock", "reason": "daily_limit", "users": ["kid"]},
+        {"type": "lock", "reason": "daily_limit", "users": ["kid"]},
     ]
     assert events == [("lock.requested", {"reason": "daily_limit"})]
 
@@ -381,7 +405,7 @@ def test_service_core_reasserts_manual_lock_until_cleared(tmp_path):
         username_provider=lambda: "kid",
         now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
         helper_sender=sent_messages.append,
-        session_locker=lambda: locked_sessions.append(True),
+        session_locker=lambda users: locked_sessions.append(users),
     )
 
     core.handle_lock({"reason": "manual"})
@@ -389,10 +413,10 @@ def test_service_core_reasserts_manual_lock_until_cleared(tmp_path):
     core.handle_clear_all({})
 
     assert sent_messages == [
-        {"type": "lock", "reason": "manual"},
-        {"type": "lock", "reason": "manual"},
+        {"type": "lock", "reason": "manual", "users": ["kid"]},
+        {"type": "lock", "reason": "manual", "users": ["kid"]},
     ]
-    assert locked_sessions == [True, True]
+    assert locked_sessions == [["kid"], ["kid"]]
     assert core.state.active_lock_reason is None
 
 

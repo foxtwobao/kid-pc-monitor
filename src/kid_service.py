@@ -21,7 +21,7 @@ class KidServiceCore:
         now_provider: Callable[[], datetime],
         helper_sender: Callable[[dict], None],
         helper_clearer: Callable[[], None] | None = None,
-        session_locker: Callable[[], None] | None = None,
+        session_locker: Callable[[list[str]], None] | None = None,
         shutdown_sender: Callable[[int], None] | None = None,
         event_logger: Callable[[str, dict], None] | None = None,
     ):
@@ -31,7 +31,7 @@ class KidServiceCore:
         self.now_provider = now_provider
         self.helper_sender = helper_sender
         self.helper_clearer = helper_clearer or (lambda: None)
-        self.session_locker = session_locker or (lambda: None)
+        self.session_locker = session_locker or (lambda _users: None)
         self.shutdown_sender = shutdown_sender or self.default_shutdown_sender
         self.event_logger = event_logger or (lambda _event_type, _data: None)
         self.state = self.state_store.load()
@@ -73,6 +73,11 @@ class KidServiceCore:
         data["updated_at"] = self.now_provider().isoformat()
         return Policy.from_dict(data)
 
+    def lock_targets(self, policy: Policy | None, username: str) -> list[str]:
+        if policy and policy.monitored_users:
+            return policy.monitored_users
+        return [username] if username else []
+
     def tick(self) -> None:
         policy = self.load_policy()
         if policy is None:
@@ -85,7 +90,7 @@ class KidServiceCore:
         self.account_usage(username, now)
         decision = evaluate_policy(policy, self.state, username, now)
         if decision.should_lock:
-            self.request_lock(decision.reason or "unknown")
+            self.request_lock(decision.reason or "unknown", [username])
             if self.state.active_lock_reason != decision.reason:
                 self.event_logger("lock.requested", {"reason": decision.reason or "unknown"})
             self.state = AgentState(
@@ -100,7 +105,7 @@ class KidServiceCore:
             self.sent_warnings.add(decision.warning_minutes)
             self.helper_sender({"type": "warning", "minutes": decision.warning_minutes})
         elif self.state.active_lock_reason == "manual":
-            self.request_lock("manual")
+            self.request_lock("manual", self.lock_targets(policy, username))
         elif self.state.active_lock_reason is not None:
             self.helper_clearer()
             self.state = AgentState(
@@ -132,10 +137,14 @@ class KidServiceCore:
             helper_last_seen_at=self.state.helper_last_seen_at,
         )
 
-    def request_lock(self, reason: str) -> None:
-        self.helper_sender({"type": "lock", "reason": reason})
+    def request_lock(self, reason: str, users: list[str] | None = None) -> None:
+        target_users = users or []
+        message = {"type": "lock", "reason": reason}
+        if target_users:
+            message["users"] = target_users
+        self.helper_sender(message)
         try:
-            self.session_locker()
+            self.session_locker(target_users)
         except Exception as exc:
             self.event_logger("lock.session_locker_failed", {"error": str(exc)})
 
@@ -207,7 +216,7 @@ class KidServiceCore:
 
     def handle_lock(self, body: dict) -> dict:
         reason = body.get("reason", "manual")
-        self.request_lock(reason)
+        self.request_lock(reason, self.lock_targets(self.load_policy(), self.username_provider()))
         self.state = AgentState(
             current_date=self.state.current_date,
             usage_seconds_by_user=self.state.usage_seconds_by_user,

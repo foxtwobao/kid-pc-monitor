@@ -1,5 +1,6 @@
 import pytest
 
+from src import helper
 from src.helper_ipc import append_command, clear_command_file, decode_message, encode_message, read_commands
 
 
@@ -44,3 +45,23 @@ def test_helper_ipc_can_clear_command_file(tmp_path):
     clear_command_file(command_file)
 
     assert command_file.read_text(encoding="utf-8") == ""
+
+
+def test_helper_ignores_lock_for_other_target_user(monkeypatch):
+    locked = []
+    monkeypatch.setattr(helper.getpass, "getuser", lambda: "foxandcat")
+    monkeypatch.setattr(helper, "lock_workstation", lambda: locked.append(True))
+
+    helper.handle_message({"type": "lock", "reason": "manual", "users": ["test"]})
+
+    assert locked == []
+
+
+def test_helper_handles_lock_for_matching_target_user(monkeypatch):
+    locked = []
+    monkeypatch.setattr(helper.getpass, "getuser", lambda: "test")
+    monkeypatch.setattr(helper, "lock_workstation", lambda: locked.append(True))
+
+    helper.handle_message({"type": "lock", "reason": "manual", "users": ["DESKTOP\\test"]})
+
+    assert locked == [True]
