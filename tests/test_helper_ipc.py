@@ -65,3 +65,23 @@ def test_helper_handles_lock_for_matching_target_user(monkeypatch):
     helper.handle_message({"type": "lock", "reason": "manual", "users": ["DESKTOP\\test"]})
 
     assert locked == [True]
+
+
+def test_helper_ignores_message_for_other_target_user(monkeypatch):
+    shown = []
+    monkeypatch.setattr(helper.getpass, "getuser", lambda: "foxandcat")
+    monkeypatch.setattr(helper, "show_message", lambda text: shown.append(text))
+
+    helper.handle_message({"type": "message", "text": "Dinner time", "users": ["test"]})
+
+    assert shown == []
+
+
+def test_helper_handles_message_for_matching_target_user(monkeypatch):
+    shown = []
+    monkeypatch.setattr(helper.getpass, "getuser", lambda: "test")
+    monkeypatch.setattr(helper, "show_message", lambda text: shown.append(text))
+
+    helper.handle_message({"type": "message", "text": "Dinner time", "users": ["DESKTOP\\test"]})
+
+    assert shown == ["Dinner time"]

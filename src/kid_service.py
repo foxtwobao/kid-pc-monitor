@@ -231,7 +231,11 @@ class KidServiceCore:
 
     def handle_message(self, body: dict) -> dict:
         text = str(body.get("message", ""))
-        self.helper_sender({"type": "message", "text": text})
+        users = self.lock_targets(self.load_policy(), self.username_provider())
+        message = {"type": "message", "text": text}
+        if users:
+            message["users"] = users
+        self.helper_sender(message)
         self.event_logger("message.sent", {"length": len(text)})
         return {"message_sent": True}
 

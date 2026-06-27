@@ -199,8 +199,25 @@ def test_service_core_can_send_parent_message_to_helper(tmp_path):
     response = core.handle_message({"message": "Dinner time"})
 
     assert response == {"message_sent": True}
-    assert sent_messages == [{"type": "message", "text": "Dinner time"}]
+    assert sent_messages == [{"type": "message", "text": "Dinner time", "users": ["kid"]}]
     assert events == [("message.sent", {"length": 11})]
+
+
+def test_service_core_parent_message_targets_monitored_user_not_admin(tmp_path):
+    sent_messages = []
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(__import__("json").dumps(make_policy(limit=999).to_dict()), encoding="utf-8")
+    core = KidServiceCore(
+        policy_path=policy_path,
+        state_path=tmp_path / "state.json",
+        username_provider=lambda: "DESKTOP\\foxandcat",
+        now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
+        helper_sender=sent_messages.append,
+    )
+
+    core.handle_message({"message": "Dinner time"})
+
+    assert sent_messages == [{"type": "message", "text": "Dinner time", "users": ["kid"]}]
 
 
 def test_service_core_manual_lock_disconnects_remote_sessions(tmp_path):
