@@ -10,4 +10,6 @@ def test_install_service_uses_current_python(monkeypatch):
     install_service.install_service()
 
     assert calls[0][0] == install_service.sys.executable
+    assert calls[0][-3:] == ["--startup", "auto", "install"]
     assert calls[1][0] == install_service.sys.executable
+    assert calls[1][-1] == "start"

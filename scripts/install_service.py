@@ -51,7 +51,7 @@ def write_uninstall_hash(token: str) -> None:
 
 def install_service() -> None:
     service_script = PROGRAM_DIR / "src" / "windows_service.py"
-    subprocess.run([sys.executable, str(service_script), "install", "--startup", "auto"], check=True)
+    subprocess.run([sys.executable, str(service_script), "--startup", "auto", "install"], check=True)
     configure_service_recovery()
     subprocess.run([sys.executable, str(service_script), "start"], check=True)
 
