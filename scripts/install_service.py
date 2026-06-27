@@ -15,6 +15,7 @@ from src.windows_hardening import (
     DATA_DIR,
     PROGRAM_DIR,
     SECRET_PATH,
+    SERVICE_NAME,
     UNINSTALL_HASH_PATH,
     apply_acls,
     configure_firewall,
@@ -24,6 +25,30 @@ from src.windows_hardening import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def service_exists() -> bool:
+    result = subprocess.run(["sc.exe", "query", SERVICE_NAME], check=False, capture_output=True, text=True)
+    return result.returncode == 0
+
+
+def stop_existing_runtime() -> None:
+    script = rf"""
+$service = Get-Service -Name "{SERVICE_NAME}" -ErrorAction SilentlyContinue
+if ($service) {{
+    if ($service.Status -ne "Stopped") {{
+        Stop-Service -Name "{SERVICE_NAME}" -Force -ErrorAction SilentlyContinue
+        $service.WaitForStatus("Stopped", [TimeSpan]::FromSeconds(30))
+    }}
+}}
+Get-CimInstance Win32_Process |
+    Where-Object {{ $_.CommandLine -like "*KidPCMonitor*helper.py*" }} |
+    ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}
+"""
+    subprocess.run(
+        ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+        check=True,
+    )
 
 
 def copy_agent_files() -> None:
@@ -51,7 +76,8 @@ def write_uninstall_hash(token: str) -> None:
 
 def install_service() -> None:
     service_script = PROGRAM_DIR / "src" / "windows_service.py"
-    subprocess.run([sys.executable, str(service_script), "--startup", "auto", "install"], check=True)
+    action = "update" if service_exists() else "install"
+    subprocess.run([sys.executable, str(service_script), "--startup", "auto", action], check=True)
     configure_service_recovery()
     subprocess.run([sys.executable, str(service_script), "start"], check=True)
 
@@ -62,6 +88,7 @@ def main() -> int:
     parser.add_argument("--uninstall-token", required=True)
     parser.add_argument("--pythonw", default="pythonw.exe")
     args = parser.parse_args()
+    stop_existing_runtime()
     copy_agent_files()
     write_secret()
     write_uninstall_hash(args.uninstall_token)

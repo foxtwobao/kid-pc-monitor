@@ -1,6 +1,22 @@
 from scripts import install_service
 
 
+def test_main_stops_existing_runtime_before_copying_files(monkeypatch):
+    calls = []
+    monkeypatch.setattr(install_service, "stop_existing_runtime", lambda: calls.append("stop"))
+    monkeypatch.setattr(install_service, "copy_agent_files", lambda: calls.append("copy"))
+    monkeypatch.setattr(install_service, "write_secret", lambda: calls.append("secret"))
+    monkeypatch.setattr(install_service, "write_uninstall_hash", lambda _token: calls.append("hash"))
+    monkeypatch.setattr(install_service, "apply_acls", lambda: calls.append("acl"))
+    monkeypatch.setattr(install_service, "configure_firewall", lambda _ip: calls.append("firewall"))
+    monkeypatch.setattr(install_service, "register_helper_run_key", lambda _pythonw: calls.append("helper"))
+    monkeypatch.setattr(install_service, "install_service", lambda: calls.append("install"))
+    monkeypatch.setattr(install_service.sys, "argv", ["install_service.py", "--uninstall-token", "token"])
+
+    assert install_service.main() == 0
+    assert calls[:2] == ["stop", "copy"]
+
+
 def test_copy_agent_files_includes_uninstaller(tmp_path, monkeypatch):
     monkeypatch.setattr(install_service, "PROGRAM_DIR", tmp_path / "Program")
     monkeypatch.setattr(install_service, "DATA_DIR", tmp_path / "Data")
@@ -12,9 +28,10 @@ def test_copy_agent_files_includes_uninstaller(tmp_path, monkeypatch):
     assert (tmp_path / "Program" / "requirements.txt").exists()
 
 
-def test_install_service_uses_current_python(monkeypatch):
+def test_install_service_installs_new_service_with_current_python(monkeypatch):
     calls = []
     monkeypatch.setattr(install_service, "PROGRAM_DIR", install_service.Path(r"C:\Program Files\KidPCMonitor"))
+    monkeypatch.setattr(install_service, "service_exists", lambda: False)
     monkeypatch.setattr(install_service.subprocess, "run", lambda command, check: calls.append(command))
     monkeypatch.setattr(install_service, "configure_service_recovery", lambda: None)
 
@@ -23,4 +40,17 @@ def test_install_service_uses_current_python(monkeypatch):
     assert calls[0][0] == install_service.sys.executable
     assert calls[0][-3:] == ["--startup", "auto", "install"]
     assert calls[1][0] == install_service.sys.executable
+    assert calls[1][-1] == "start"
+
+
+def test_install_service_updates_existing_service(monkeypatch):
+    calls = []
+    monkeypatch.setattr(install_service, "PROGRAM_DIR", install_service.Path(r"C:\Program Files\KidPCMonitor"))
+    monkeypatch.setattr(install_service, "service_exists", lambda: True)
+    monkeypatch.setattr(install_service.subprocess, "run", lambda command, check: calls.append(command))
+    monkeypatch.setattr(install_service, "configure_service_recovery", lambda: None)
+
+    install_service.install_service()
+
+    assert calls[0][-3:] == ["--startup", "auto", "update"]
     assert calls[1][-1] == "start"
