@@ -20,6 +20,7 @@ PENDING_COMMANDS_FILE = os.environ.get("KID_PC_PENDING_COMMANDS_FILE", "pending_
 DEVICE_SECRETS_FILE = os.environ.get("KID_PC_DEVICE_SECRETS_FILE", "device_secrets.json")
 DEVICE_PROFILES_FILE = os.environ.get("KID_PC_DEVICE_PROFILES_FILE", "device_profiles.json")
 PAIRING_TOKEN_FILE = os.environ.get("KID_PC_PAIRING_TOKEN_FILE", "pairing.token")
+RAW_BASE = os.environ.get("KID_PC_RAW_BASE", "https://raw.githubusercontent.com/foxtwobao/kid-pc-monitor/main")
 
 # Custom PC names (optional) - Add your kids' PC names here
 CUSTOM_PC_NAMES = {
@@ -121,6 +122,22 @@ def current_pairing_token():
 
 def panel_port():
     return int(os.environ.get("KID_PC_PANEL_PORT", "5000"))
+
+
+def powershell_single_quote(value):
+    return str(value).replace("'", "''")
+
+
+def child_install_command(parent_url):
+    parent = str(parent_url).rstrip("/")
+    token = current_pairing_token()
+    script_url = f"{RAW_BASE}/scripts/install_child.ps1"
+    return (
+        'powershell -NoProfile -ExecutionPolicy Bypass -Command '
+        f'"iex (irm \'{powershell_single_quote(script_url)}\'); '
+        f"Install-KidPCMonitorChild -ParentUrl '{powershell_single_quote(parent)}' "
+        f"-PairingToken '{powershell_single_quote(token)}'\""
+    )
 
 
 def build_signed_command(body, secret_hex, now=None, nonce=None):
@@ -379,7 +396,8 @@ def index():
 
     return render_template_string(INDEX_TEMPLATE,
                                   pcs=discovered_pcs,
-                                  last_scan=last_scan_time)
+                                  last_scan=last_scan_time,
+                                  child_install_command=child_install_command(request.url_root))
 
 @app.route('/scan')
 def scan():
@@ -565,17 +583,68 @@ INDEX_TEMPLATE = '''
             font-size: 14px;
             margin-top: 20px;
         }
+        .install-panel {
+            background: white;
+            padding: 16px;
+            margin: 16px 0 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .install-panel h2 {
+            margin: 0 0 10px;
+            color: #333;
+            font-size: 18px;
+        }
+        .install-command {
+            width: 100%;
+            min-height: 120px;
+            box-sizing: border-box;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-family: Consolas, monospace;
+            font-size: 13px;
+            resize: vertical;
+        }
+        .copy-btn {
+            width: 100%;
+            padding: 12px;
+            margin-top: 10px;
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 15px;
+            cursor: pointer;
+        }
+        .copy-btn:hover {
+            background-color: #0b7dda;
+        }
     </style>
     <script>
         // Auto-refresh every 30 seconds
         setTimeout(function() {
             location.reload();
         }, 30000);
+        function copyChildInstallCommand() {
+            const command = document.getElementById('child-install-command');
+            command.select();
+            command.setSelectionRange(0, command.value.length);
+            navigator.clipboard.writeText(command.value).catch(function() {
+                document.execCommand('copy');
+            });
+        }
     </script>
 </head>
 <body>
     <div class="container">
         <h1>👨‍👩‍👧‍👦 Kids PC Control Panel</h1>
+
+        <div class="install-panel">
+            <h2>Child Windows install command</h2>
+            <textarea id="child-install-command" class="install-command" readonly>{{ child_install_command }}</textarea>
+            <button type="button" class="copy-btn" onclick="copyChildInstallCommand()">Copy command</button>
+        </div>
         
         <button onclick="location.href='/scan'" class="scan-btn">
             🔍 Scan for PCs

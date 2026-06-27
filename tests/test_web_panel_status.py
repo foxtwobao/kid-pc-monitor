@@ -1,6 +1,7 @@
 from src.web_panel import (
     DEVICE_SECRETS,
     PENDING_COMMANDS,
+    child_install_command,
     command_body_from_legacy,
     configured_device_secrets,
     current_user_from_status,
@@ -37,6 +38,17 @@ def test_panel_port_defaults_and_reads_environment(monkeypatch):
 
     monkeypatch.setenv("KID_PC_PANEL_PORT", "5055")
     assert panel_port() == 5055
+
+
+def test_child_install_command_uses_parent_url_and_pairing_token(monkeypatch):
+    monkeypatch.setenv("KID_PC_PAIRING_TOKEN", "pair-me")
+
+    command = child_install_command("http://192.168.10.38:5000")
+
+    assert "powershell -NoProfile -ExecutionPolicy Bypass -Command" in command
+    assert "Install-KidPCMonitorChild" in command
+    assert "-ParentUrl 'http://192.168.10.38:5000'" in command
+    assert "-PairingToken 'pair-me'" in command
 
 
 def test_current_user_from_status_reads_signed_status_body():
@@ -149,10 +161,11 @@ def test_pair_endpoint_rejects_wrong_token(tmp_path, monkeypatch):
 def test_web_panel_pages_render_from_bundled_templates():
     client = app.test_client()
 
-    index_response = client.get("/")
+    index_response = client.get("/", base_url="http://192.168.10.38:5000")
     control_response = client.get("/control/192.168.10.251")
 
     assert index_response.status_code == 200
+    assert b"Install-KidPCMonitorChild" in index_response.data
     assert control_response.status_code == 200
 
 
