@@ -364,6 +364,36 @@ def test_service_core_sends_remaining_update_when_minute_changes(tmp_path):
     ]
 
 
+def test_service_core_clears_remaining_update_when_limit_is_removed(tmp_path):
+    sent_messages = []
+    times = iter(
+        [
+            datetime(2026, 6, 27, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 6, 27, 12, 0, 10, tzinfo=timezone.utc),
+            datetime(2026, 6, 27, 12, 0, 20, tzinfo=timezone.utc),
+        ]
+    )
+    policy_path = tmp_path / "policy.json"
+    state_path = tmp_path / "state.json"
+    policy_path.write_text(__import__("json").dumps(make_policy(limit=60).to_dict()), encoding="utf-8")
+    core = KidServiceCore(
+        policy_path=policy_path,
+        state_path=state_path,
+        username_provider=lambda: "kid",
+        now_provider=lambda: next(times),
+        helper_sender=sent_messages.append,
+    )
+
+    core.tick()
+    core.handle_clear_usage_limit({})
+    core.tick()
+
+    assert [message for message in sent_messages if message["type"] == "remaining"] == [
+        {"type": "remaining", "minutes": 60, "users": ["kid"]},
+        {"type": "remaining", "minutes": None, "users": ["kid"]},
+    ]
+
+
 def test_service_core_sends_ten_minute_warning_once(tmp_path):
     sent_messages = []
     times = iter(

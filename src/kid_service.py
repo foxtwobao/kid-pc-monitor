@@ -39,6 +39,7 @@ class KidServiceCore:
         self.last_tick_at: datetime | None = None
         self.last_tick_username: str | None = None
         self.last_remaining_minutes: int | None = None
+        self.remaining_was_limited = False
 
     @staticmethod
     def default_shutdown_sender(seconds: int) -> None:
@@ -130,9 +131,16 @@ class KidServiceCore:
 
     def send_remaining_if_changed(self, policy: Policy, username: str) -> None:
         remaining_minutes = remaining_daily_limit_minutes(policy, self.state, username)
-        if remaining_minutes is None or remaining_minutes == self.last_remaining_minutes:
+        if remaining_minutes is None:
+            if self.remaining_was_limited:
+                self.remaining_was_limited = False
+                self.last_remaining_minutes = None
+                self.helper_sender({"type": "remaining", "minutes": None, "users": [username]})
+            return
+        if remaining_minutes == self.last_remaining_minutes and self.remaining_was_limited:
             return
         self.last_remaining_minutes = remaining_minutes
+        self.remaining_was_limited = True
         self.helper_sender({"type": "remaining", "minutes": remaining_minutes, "users": [username]})
 
     def account_usage(self, username: str, now: datetime) -> None:
