@@ -164,6 +164,29 @@ def test_index_shows_paired_device_from_disk(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert b"kid-laptop" in response.data
     assert b"192.168.10.251" in response.data
+    assert b"Monitored Users:" in response.data
+    assert b"kid" in response.data
+
+
+def test_control_page_shows_monitored_users(monkeypatch):
+    discovered_pcs.clear()
+    discovered_pcs["192.168.10.251"] = {
+        "hostname": "kid-laptop",
+        "locked": False,
+        "monitored_users": ["Phil"],
+    }
+    monkeypatch.setattr("src.web_panel.check_pc_status", lambda _ip: "UNLOCKED")
+    monkeypatch.setattr("src.web_panel.get_current_user", lambda _ip: None)
+    monkeypatch.setattr("src.web_panel.get_usage_limit", lambda _ip: None)
+    monkeypatch.setattr("src.web_panel.get_lock_times", lambda _ip: None)
+    monkeypatch.setattr("src.web_panel.get_time_remaining", lambda _ip: None)
+    monkeypatch.setattr("src.web_panel.sync_pending_command", lambda _ip: False)
+
+    response = app.test_client().get("/control/192.168.10.251")
+
+    assert response.status_code == 200
+    assert b"Monitored Users:" in response.data
+    assert b"Phil" in response.data
 
 
 def test_ensure_paired_devices_visible_keeps_existing_runtime_status(tmp_path, monkeypatch):

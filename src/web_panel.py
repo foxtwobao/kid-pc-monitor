@@ -687,6 +687,13 @@ INDEX_TEMPLATE = '''
             <div class="pc-card" onclick="location.href='/control/{{ ip }}'">
                 <div class="pc-name">💻 {{ info.hostname }}</div>
                 <div class="pc-ip">{{ ip }}</div>
+                <div class="pc-ip">👥 Monitored Users:
+                    {% if info.get('monitored_users') %}
+                    {{ info.monitored_users|join(', ') }}
+                    {% else %}
+                    Not set
+                    {% endif %}
+                </div>
                 {% if info.get('current_user') %}
                 <div class="pc-ip">👤 User: {{ info.current_user }}</div>
                 {% endif %}
@@ -854,6 +861,14 @@ CONTROL_TEMPLATE = '''
         <!-- Display Current Settings (Always Visible) -->
         <div class="action-group">
             <div class="action-title">📊 Current Settings</div>
+
+            <p>👥 <strong>Monitored Users:</strong>
+            {% if pc_info.get('monitored_users') %}
+                {{ pc_info.monitored_users|join(', ') }}
+            {% else %}
+                <span style="color: #999;">Not set</span>
+            {% endif %}
+            </p>
 
             <!-- Daily Usage Limit -->
             <p>⏱️ <strong>Daily Limit:</strong>
