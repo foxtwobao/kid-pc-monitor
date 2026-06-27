@@ -294,6 +294,38 @@ def test_service_core_locks_after_locally_accounted_usage_reaches_limit(tmp_path
     assert sent_messages[-1] == {"type": "lock", "reason": "daily_limit"}
 
 
+def test_service_core_sends_lock_once_while_limit_remains_active(tmp_path):
+    sent_messages = []
+    events = []
+    times = iter(
+        [
+            datetime(2026, 6, 27, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 6, 27, 12, 1, 0, tzinfo=timezone.utc),
+            datetime(2026, 6, 27, 12, 1, 1, tzinfo=timezone.utc),
+        ]
+    )
+    policy_path = tmp_path / "policy.json"
+    state_path = tmp_path / "state.json"
+    policy_path.write_text(__import__("json").dumps(make_policy(limit=1).to_dict()), encoding="utf-8")
+    core = KidServiceCore(
+        policy_path=policy_path,
+        state_path=state_path,
+        username_provider=lambda: "kid",
+        now_provider=lambda: next(times),
+        helper_sender=sent_messages.append,
+        event_logger=lambda event_type, data: events.append((event_type, data)),
+    )
+
+    core.tick()
+    core.tick()
+    core.tick()
+
+    assert [message for message in sent_messages if message["type"] == "lock"] == [
+        {"type": "lock", "reason": "daily_limit"}
+    ]
+    assert events == [("lock.requested", {"reason": "daily_limit"})]
+
+
 def test_service_core_clears_stale_lock_reason_when_policy_no_longer_locks(tmp_path):
     sent_messages = []
     policy_path = tmp_path / "policy.json"

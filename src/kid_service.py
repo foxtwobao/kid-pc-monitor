@@ -81,8 +81,9 @@ class KidServiceCore:
         self.account_usage(username, now)
         decision = evaluate_policy(policy, self.state, username, now)
         if decision.should_lock:
-            self.helper_sender({"type": "lock", "reason": decision.reason})
-            self.event_logger("lock.requested", {"reason": decision.reason or "unknown"})
+            if self.state.active_lock_reason != decision.reason:
+                self.helper_sender({"type": "lock", "reason": decision.reason})
+                self.event_logger("lock.requested", {"reason": decision.reason or "unknown"})
             self.state = AgentState(
                 current_date=self.state.current_date,
                 usage_seconds_by_user=self.state.usage_seconds_by_user,
