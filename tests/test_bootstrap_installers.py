@@ -13,6 +13,13 @@ def test_parent_bootstrap_prints_child_one_liner():
     assert "lsof -tiTCP" in script
     assert "Stopping existing Kid PC Monitor parent panel" in script
     assert "Port ${PANEL_PORT} is already in use" in script
+    assert "install_systemd_user_service" in script
+    assert "systemctl --user enable --now" in script
+    assert "nohup" in script
+    assert "web_panel.log" in script
+    assert "Background service:" in script
+    assert "Keep this terminal open" not in script
+    assert script.rstrip().endswith("EOF")
 
 
 def test_child_bootstrap_installs_service_and_pairs_with_parent():

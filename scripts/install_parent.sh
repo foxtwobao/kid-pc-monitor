@@ -5,6 +5,13 @@ REPO_URL="${KID_PC_REPO_URL:-https://github.com/foxtwobao/kid-pc-monitor.git}"
 RAW_BASE="${KID_PC_RAW_BASE:-https://raw.githubusercontent.com/foxtwobao/kid-pc-monitor/main}"
 INSTALL_DIR="${KID_PC_PARENT_DIR:-$HOME/.kid-pc-monitor/app}"
 PANEL_PORT="${KID_PC_PANEL_PORT:-5000}"
+CURRENT_USER="${USER:-$(id -un)}"
+SERVICE_NAME="kid-pc-monitor.service"
+SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
+RUNNER="$INSTALL_DIR/run_parent_panel.sh"
+LOG_FILE="$INSTALL_DIR/web_panel.log"
+BACKGROUND_SERVICE=""
+AUTOSTART_STATUS=""
 
 need() {
     command -v "$1" >/dev/null 2>&1 || {
@@ -15,6 +22,16 @@ need() {
 
 need git
 need python3
+
+systemd_user_available() {
+    command -v systemctl >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1
+}
+
+stop_existing_systemd_user_service() {
+    if systemd_user_available; then
+        systemctl --user stop "$SERVICE_NAME" >/dev/null 2>&1 || true
+    fi
+}
 
 list_parent_panel_pids() {
     if command -v lsof >/dev/null 2>&1; then
@@ -66,6 +83,57 @@ stop_existing_parent_panel() {
     fi
 }
 
+write_parent_runner() {
+    cat >"$RUNNER" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$INSTALL_DIR"
+export KID_PC_PAIRING_TOKEN_FILE="$PAIRING_TOKEN_FILE"
+export KID_PC_DEVICE_SECRETS_FILE="$INSTALL_DIR/device_secrets.json"
+export KID_PC_PANEL_PORT="$PANEL_PORT"
+exec >>"$LOG_FILE" 2>&1
+exec "$PYTHON" -m src.web_panel
+EOF
+    chmod 700 "$RUNNER"
+}
+
+install_systemd_user_service() {
+    systemd_user_available || return 1
+    mkdir -p "$SYSTEMD_USER_DIR"
+    cat >"$SYSTEMD_USER_DIR/$SERVICE_NAME" <<EOF
+[Unit]
+Description=Kid PC Monitor parent web panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$RUNNER
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+    systemctl --user daemon-reload
+    systemctl --user enable --now "$SERVICE_NAME"
+    BACKGROUND_SERVICE="systemd user service: $SERVICE_NAME"
+    AUTOSTART_STATUS="enabled with systemctl --user enable --now"
+    if command -v loginctl >/dev/null 2>&1; then
+        if loginctl enable-linger "$CURRENT_USER" >/dev/null 2>&1; then
+            AUTOSTART_STATUS="$AUTOSTART_STATUS; boot autostart enabled via loginctl linger"
+        else
+            AUTOSTART_STATUS="$AUTOSTART_STATUS; starts after user login. For boot before login, run: loginctl enable-linger $CURRENT_USER"
+        fi
+    fi
+}
+
+start_nohup_parent_panel() {
+    nohup "$RUNNER" >/dev/null 2>&1 &
+    BACKGROUND_SERVICE="nohup background process (pid $!)"
+    AUTOSTART_STATUS="not configured automatically because systemd user services are unavailable"
+}
+
 mkdir -p "$(dirname "$INSTALL_DIR")"
 if [[ -d "$INSTALL_DIR/.git" ]]; then
     git -C "$INSTALL_DIR" pull --ff-only
@@ -106,7 +174,12 @@ PY
 
 CHILD_COMMAND="powershell -NoProfile -ExecutionPolicy Bypass -Command \"iex (irm '${RAW_BASE}/scripts/install_child.ps1'); Install-KidPCMonitorChild -ParentUrl 'http://${PARENT_IP}:${PANEL_PORT}' -PairingToken '${PAIRING_TOKEN}'\""
 
+write_parent_runner
+stop_existing_systemd_user_service
 stop_existing_parent_panel
+if ! install_systemd_user_service; then
+    start_nohup_parent_panel
+fi
 
 cat <<EOF
 
@@ -118,11 +191,13 @@ Open:
 Run this ONE command on each child Windows PC from an Administrator PowerShell:
   ${CHILD_COMMAND}
 
-Keep this terminal open while pairing child PCs.
+Background service:
+  ${BACKGROUND_SERVICE}
+
+Autostart:
+  ${AUTOSTART_STATUS}
+
+Log:
+  ${LOG_FILE}
 
 EOF
-
-export KID_PC_PAIRING_TOKEN_FILE="$PAIRING_TOKEN_FILE"
-export KID_PC_DEVICE_SECRETS_FILE="$INSTALL_DIR/device_secrets.json"
-export KID_PC_PANEL_PORT="$PANEL_PORT"
-exec "$PYTHON" -m src.web_panel

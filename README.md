@@ -38,6 +38,8 @@ curl -fsSL https://raw.githubusercontent.com/foxtwobao/kid-pc-monitor/main/scrip
 
 Then copy the child install command printed by that terminal and run it from an Administrator PowerShell on each child Windows PC.
 
+The parent installer starts the web panel in the background and exits. On Linux with systemd user services, it also enables autostart.
+
 The child installer lists local Windows users so you can choose the child account to monitor, then pairs with the parent panel and registers its secret. You do not need to copy `agent.secret` by hand. To skip the prompt, append `-ChildUser "kid-user-name"` to the printed child command.
 
 Full Chinese deployment guide: [docs/DEPLOYMENT.zh-CN.md](docs/DEPLOYMENT.zh-CN.md).

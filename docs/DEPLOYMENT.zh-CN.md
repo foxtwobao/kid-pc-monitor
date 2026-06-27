@@ -10,13 +10,15 @@
 curl -fsSL https://raw.githubusercontent.com/foxtwobao/kid-pc-monitor/main/scripts/install_parent.sh | bash
 ```
 
-它会自动下载项目、创建 Python 环境、安装依赖、生成配对 token、启动 Web 面板，并在终端打印孩子端安装命令。
+它会自动下载项目、创建 Python 环境、安装依赖、生成配对 token、后台启动 Web 面板，并在终端打印孩子端安装命令。
 
-保持这个终端窗口打开。浏览器访问：
+命令输出完毕后会退出，不需要保持终端窗口打开。浏览器访问：
 
 ```text
 http://<家长电脑IP>:5000
 ```
+
+在支持 systemd user service 的 Linux 上，安装脚本会启用 `kid-pc-monitor.service` 自启动；如果当前系统不支持，会退回 `nohup` 后台运行，并在输出里说明未自动配置自启动。
 
 ### 2. 客户端/孩子端
 
@@ -75,6 +77,12 @@ Kid PC Monitor parent panel is ready.
 Open:
   http://<家长电脑IP>:5000
 Run this ONE command on each child Windows PC...
+Background service:
+  ...
+Autostart:
+  ...
+Log:
+  ~/.kid-pc-monitor/app/web_panel.log
 ```
 
 已配对的孩子端密钥会保存在：
