@@ -9,7 +9,10 @@ from ctypes import wintypes
 WTS_CURRENT_SERVER_HANDLE = 0
 WTS_USER_NAME = 5
 WTS_DOMAIN_NAME = 7
+WTS_SESSION_INFO_EX = 25
 WTS_ACTIVE = 0
+WTS_SESSION_LOCKED = 0
+WTS_SESSION_UNLOCKED = 1
 
 
 class WTS_SESSION_INFO(ctypes.Structure):
@@ -17,6 +20,15 @@ class WTS_SESSION_INFO(ctypes.Structure):
         ("session_id", wintypes.DWORD),
         ("station_name", wintypes.LPWSTR),
         ("state", wintypes.DWORD),
+    ]
+
+
+class WTSINFOEX_LOCK_STATE(ctypes.Structure):
+    _fields_ = [
+        ("level", wintypes.DWORD),
+        ("session_id", wintypes.DWORD),
+        ("session_state", wintypes.DWORD),
+        ("session_flags", wintypes.LONG),
     ]
 
 
@@ -43,11 +55,13 @@ def current_interactive_username() -> str:
     if sys.platform != "win32":
         return getpass.getuser()
 
-    username = select_interactive_username(enumerate_sessions(), _query_session_username)
+    username = select_interactive_username(enumerate_sessions(), _query_session_username, is_session_unlocked)
     if username:
         return username
 
     session_id = ctypes.windll.kernel32.WTSGetActiveConsoleSessionId()
+    if not is_session_unlocked(session_id):
+        return ""
     return _query_session_username(session_id)
 
 
@@ -84,9 +98,32 @@ def enumerate_sessions() -> list[dict]:
         ctypes.windll.wtsapi32.WTSFreeMemory(sessions_ptr)
 
 
-def select_interactive_username(sessions: list[dict], query_username) -> str:
+def is_session_unlocked(session_id: int) -> bool:
+    if sys.platform != "win32":
+        return True
+    buffer = ctypes.c_void_p()
+    bytes_returned = ctypes.c_ulong()
+    ok = ctypes.windll.wtsapi32.WTSQuerySessionInformationW(
+        WTS_CURRENT_SERVER_HANDLE,
+        session_id,
+        WTS_SESSION_INFO_EX,
+        ctypes.byref(buffer),
+        ctypes.byref(bytes_returned),
+    )
+    if not ok:
+        return False
+    try:
+        info = ctypes.cast(buffer, ctypes.POINTER(WTSINFOEX_LOCK_STATE)).contents
+        return info.session_flags == WTS_SESSION_UNLOCKED
+    finally:
+        ctypes.windll.wtsapi32.WTSFreeMemory(buffer)
+
+
+def select_interactive_username(sessions: list[dict], query_username, query_unlocked=lambda _session_id: True) -> str:
     for session in sessions:
         if session["state"] == WTS_ACTIVE:
+            if not query_unlocked(session["session_id"]):
+                continue
             username = query_username(session["session_id"])
             if username:
                 return username

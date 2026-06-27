@@ -43,6 +43,19 @@ def test_select_interactive_username_ignores_empty_active_sessions():
     assert select_interactive_username(sessions, lambda session_id: "" if session_id == 1 else "kid") == "kid"
 
 
+def test_select_interactive_username_ignores_locked_active_sessions():
+    sessions = [
+        {"session_id": 1, "state": 0},
+        {"session_id": 2, "state": 0},
+    ]
+
+    assert select_interactive_username(
+        sessions,
+        lambda session_id: f"user-{session_id}",
+        lambda session_id: session_id == 2,
+    ) == "user-2"
+
+
 def test_active_remote_session_ids_selects_active_rdp_sessions_only():
     sessions = [
         {"session_id": 1, "state": 0, "station_name": "console"},
