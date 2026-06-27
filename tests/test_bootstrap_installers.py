@@ -28,6 +28,13 @@ def test_child_bootstrap_installs_service_and_pairs_with_parent():
     assert "function Install-KidPCMonitorChild" in script
     assert "function Invoke-KidPCMonitorNativeCommand" in script
     assert "$LASTEXITCODE" in script
+    assert "function Test-KidPCMonitorPython" in script
+    assert "function Install-KidPCMonitorPython" in script
+    assert "python-3.12.10-amd64.exe" in script
+    assert "InstallAllUsers=1" in script
+    assert "PrependPath=1" in script
+    assert "Include_pip=1" in script
+    assert "Get-KidPCMonitorPython" in script
     assert "function Get-KidPCMonitorChildUser" in script
     assert "[string]$ChildUser" in script
     assert "Get-KidPCMonitorSelectableUsers" in script

@@ -21,6 +21,69 @@ function Invoke-KidPCMonitorNativeCommand {
     }
 }
 
+function Test-KidPCMonitorPython {
+    param([string]$PythonPath)
+    if (-not $PythonPath) {
+        return $false
+    }
+    try {
+        & $PythonPath -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" *> $null
+        return $LASTEXITCODE -eq 0
+    } catch {
+        return $false
+    }
+}
+
+function Install-KidPCMonitorPython {
+    param(
+        [string]$InstallerUrl = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe"
+    )
+
+    $installerPath = Join-Path $env:TEMP "kid-pc-monitor-python-installer.exe"
+    Write-Host "Python 3.10+ was not found. Installing Python 3.12..."
+    Invoke-WebRequest -UseBasicParsing -Uri $InstallerUrl -OutFile $installerPath
+    Invoke-KidPCMonitorNativeCommand -FailureMessage "Python installer failed." -Command {
+        & $installerPath /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1 Include_test=0
+    }
+}
+
+function Get-KidPCMonitorPython {
+    $candidates = @()
+    $command = Get-Command python.exe -ErrorAction SilentlyContinue
+    if ($command) {
+        $candidates += $command.Source
+    }
+    $candidates += @(
+        "$env:ProgramFiles\Python312\python.exe",
+        "$env:ProgramFiles\Python311\python.exe",
+        "$env:ProgramFiles\Python310\python.exe",
+        "${env:LocalAppData}\Programs\Python\Python312\python.exe",
+        "${env:LocalAppData}\Programs\Python\Python311\python.exe",
+        "${env:LocalAppData}\Programs\Python\Python310\python.exe"
+    )
+
+    foreach ($candidate in ($candidates | Where-Object { $_ } | Select-Object -Unique)) {
+        if (Test-KidPCMonitorPython $candidate) {
+            return $candidate
+        }
+    }
+
+    Install-KidPCMonitorPython
+
+    foreach ($candidate in ($candidates | Where-Object { $_ } | Select-Object -Unique)) {
+        if (Test-KidPCMonitorPython $candidate) {
+            return $candidate
+        }
+    }
+
+    $refreshed = Get-Command python.exe -ErrorAction SilentlyContinue
+    if ($refreshed -and (Test-KidPCMonitorPython $refreshed.Source)) {
+        return $refreshed.Source
+    }
+
+    throw "Python 3.10+ was installed, but python.exe could not be found. Open a new Administrator PowerShell and rerun the one-line command."
+}
+
 function Test-KidPCMonitorLocalAdmin {
     param([string]$UserName)
     $shortName = Get-KidPCMonitorShortUserName $UserName
@@ -205,10 +268,7 @@ function Install-KidPCMonitorChild {
     $parentUri = [Uri]$ParentUrl
     $parentHost = $parentUri.Host
 
-    $python = (Get-Command python.exe -ErrorAction SilentlyContinue).Source
-    if (-not $python) {
-        throw "Python is required. Install Python 3.10+ first, then rerun the one-line command."
-    }
+    $python = Get-KidPCMonitorPython
 
     $workDir = Join-Path $env:TEMP ("kid-pc-monitor-" + [Guid]::NewGuid().ToString("N"))
     $zipPath = Join-Path $workDir "kid-pc-monitor.zip"
