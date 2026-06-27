@@ -36,4 +36,7 @@ def test_windows_service_script_reaches_pywin32_check_from_installed_src_tree(tm
     )
 
     assert result.returncode == 1
-    assert "pywin32 is required" in result.stderr
+    if sys.platform == "win32":
+        assert "Usage:" in result.stdout
+    else:
+        assert "pywin32 is required" in result.stderr
