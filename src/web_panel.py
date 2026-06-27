@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask import Flask, render_template_string, request, jsonify, redirect, url_for
 import json
 import os
 import socket
@@ -373,9 +373,9 @@ def index():
             discovered_pcs[ip]['current_user'] = username
         discovered_pcs[ip]['pending_sync'] = ip in PENDING_COMMANDS
 
-    return render_template('index.html',
-                         pcs=discovered_pcs,
-                         last_scan=last_scan_time)
+    return render_template_string(INDEX_TEMPLATE,
+                                  pcs=discovered_pcs,
+                                  last_scan=last_scan_time)
 
 @app.route('/scan')
 def scan():
@@ -408,7 +408,7 @@ def control(ip):
     pc_info['time_remaining'] = time_remaining  # Update even if None
     pc_info['pending_sync'] = ip in PENDING_COMMANDS
 
-    return render_template('control.html', ip=ip, pc_info=pc_info)
+    return render_template_string(CONTROL_TEMPLATE, ip=ip, pc_info=pc_info)
 
 @app.route('/action', methods=['POST'])
 def action():
@@ -997,16 +997,6 @@ CONTROL_TEMPLATE = '''
 </body>
 </html>
 '''
-
-# Create template files
-import os
-os.makedirs('templates', exist_ok=True)
-
-with open('templates/index.html', 'w', encoding='utf-8') as f:
-    f.write(INDEX_TEMPLATE)
-
-with open('templates/control.html', 'w', encoding='utf-8') as f:
-    f.write(CONTROL_TEMPLATE)
 
 if __name__ == '__main__':
     # Do initial scan

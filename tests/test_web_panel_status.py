@@ -137,6 +137,16 @@ def test_pair_endpoint_rejects_wrong_token(tmp_path, monkeypatch):
     assert not secret_file.exists()
 
 
+def test_web_panel_pages_render_from_bundled_templates():
+    client = app.test_client()
+
+    index_response = client.get("/")
+    control_response = client.get("/control/192.168.10.251")
+
+    assert index_response.status_code == 200
+    assert control_response.status_code == 200
+
+
 def test_save_device_secret_rejects_non_hex_secret(tmp_path):
     try:
         save_device_secret("192.168.10.251", "not-hex", secrets_file=tmp_path / "secrets.json")
