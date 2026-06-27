@@ -27,6 +27,16 @@ from src.windows_hardening import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def ensure_pywin32_available() -> None:
+    try:
+        import win32serviceutil  # noqa: F401
+    except ImportError as exc:
+        raise SystemExit(
+            "pywin32 is required to install KidPCMonitorService. "
+            "Run: python -m pip install pywin32"
+        ) from exc
+
+
 def service_exists() -> bool:
     result = subprocess.run(["sc.exe", "query", SERVICE_NAME], check=False, capture_output=True, text=True)
     return result.returncode == 0
@@ -88,6 +98,7 @@ def main() -> int:
     parser.add_argument("--uninstall-token", required=True)
     parser.add_argument("--pythonw", default="pythonw.exe")
     args = parser.parse_args()
+    ensure_pywin32_available()
     stop_existing_runtime()
     copy_agent_files()
     write_secret()

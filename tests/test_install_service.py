@@ -1,8 +1,13 @@
+import builtins
+
+import pytest
+
 from scripts import install_service
 
 
 def test_main_stops_existing_runtime_before_copying_files(monkeypatch):
     calls = []
+    monkeypatch.setattr(install_service, "ensure_pywin32_available", lambda: calls.append("pywin32"))
     monkeypatch.setattr(install_service, "stop_existing_runtime", lambda: calls.append("stop"))
     monkeypatch.setattr(install_service, "copy_agent_files", lambda: calls.append("copy"))
     monkeypatch.setattr(install_service, "write_secret", lambda: calls.append("secret"))
@@ -14,7 +19,7 @@ def test_main_stops_existing_runtime_before_copying_files(monkeypatch):
     monkeypatch.setattr(install_service.sys, "argv", ["install_service.py", "--uninstall-token", "token"])
 
     assert install_service.main() == 0
-    assert calls[:2] == ["stop", "copy"]
+    assert calls[:3] == ["pywin32", "stop", "copy"]
 
 
 def test_copy_agent_files_includes_uninstaller(tmp_path, monkeypatch):
@@ -26,6 +31,39 @@ def test_copy_agent_files_includes_uninstaller(tmp_path, monkeypatch):
     assert (tmp_path / "Program" / "src" / "windows_service.py").exists()
     assert (tmp_path / "Program" / "scripts" / "uninstall_service.py").exists()
     assert (tmp_path / "Program" / "requirements.txt").exists()
+
+
+def test_main_checks_pywin32_before_install(monkeypatch):
+    calls = []
+    monkeypatch.setattr(install_service, "ensure_pywin32_available", lambda: calls.append("pywin32"))
+    monkeypatch.setattr(install_service, "stop_existing_runtime", lambda: calls.append("stop"))
+    monkeypatch.setattr(install_service, "copy_agent_files", lambda: calls.append("copy"))
+    monkeypatch.setattr(install_service, "write_secret", lambda: calls.append("secret"))
+    monkeypatch.setattr(install_service, "write_uninstall_hash", lambda _token: calls.append("hash"))
+    monkeypatch.setattr(install_service, "apply_acls", lambda: calls.append("acl"))
+    monkeypatch.setattr(install_service, "configure_firewall", lambda _ip: calls.append("firewall"))
+    monkeypatch.setattr(install_service, "register_helper_run_key", lambda _pythonw: calls.append("helper"))
+    monkeypatch.setattr(install_service, "install_service", lambda: calls.append("install"))
+    monkeypatch.setattr(install_service.sys, "argv", ["install_service.py", "--uninstall-token", "token"])
+
+    assert install_service.main() == 0
+    assert calls[0] == "pywin32"
+
+
+def test_ensure_pywin32_available_explains_missing_dependency(monkeypatch):
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "win32serviceutil":
+            raise ImportError("missing")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    with pytest.raises(SystemExit) as excinfo:
+        install_service.ensure_pywin32_available()
+
+    assert "pywin32 is required" in str(excinfo.value)
 
 
 def test_install_service_installs_new_service_with_current_python(monkeypatch):

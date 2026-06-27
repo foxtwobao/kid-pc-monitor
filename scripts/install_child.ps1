@@ -6,6 +6,21 @@ function Get-KidPCMonitorShortUserName {
     return ($UserName -split "\\")[-1].Trim()
 }
 
+function Invoke-KidPCMonitorNativeCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FailureMessage,
+
+        [Parameter(Mandatory = $true)]
+        [scriptblock]$Command
+    )
+
+    & $Command
+    if ($LASTEXITCODE -ne 0) {
+        throw "$FailureMessage Exit code: $LASTEXITCODE"
+    }
+}
+
 function Test-KidPCMonitorLocalAdmin {
     param([string]$UserName)
     $shortName = Get-KidPCMonitorShortUserName $UserName
@@ -208,10 +223,14 @@ function Install-KidPCMonitorChild {
     }
 
     Write-Host "Installing Python dependencies..."
-    & $python -m pip install -r (Join-Path $repoDir.FullName "requirements.txt")
+    Invoke-KidPCMonitorNativeCommand -FailureMessage "Python dependency installation failed." -Command {
+        & $python -m pip install -r (Join-Path $repoDir.FullName "requirements.txt")
+    }
 
     Write-Host "Installing child-side Windows service..."
-    & $python (Join-Path $repoDir.FullName "scripts\install_service.py") --parent-ip $parentHost --uninstall-token $PairingToken
+    Invoke-KidPCMonitorNativeCommand -FailureMessage "Child service installer failed." -Command {
+        & $python (Join-Path $repoDir.FullName "scripts\install_service.py") --parent-ip $parentHost --uninstall-token $PairingToken
+    }
     Test-KidPCMonitorChildConnectivity -ParentHost $parentHost
 
     $selectedChildUser = Get-KidPCMonitorChildUser -RequestedChildUser $ChildUser
