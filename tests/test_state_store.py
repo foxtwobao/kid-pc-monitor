@@ -31,6 +31,28 @@ def test_state_store_returns_default_when_missing(tmp_path):
     assert state.last_policy_version == 0
 
 
+def test_state_store_loads_utf8_bom_json(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text(
+        json.dumps(
+            {
+                "current_date": date.today().isoformat(),
+                "usage_seconds_by_user": {"kid": 12},
+                "active_lock_reason": None,
+                "last_policy_version": 3,
+                "unsent_event_cursor": 0,
+                "helper_last_seen_at": None,
+            }
+        ),
+        encoding="utf-8-sig",
+    )
+
+    state = StateStore(path).load()
+
+    assert state.usage_seconds_by_user == {"kid": 12}
+    assert state.last_policy_version == 3
+
+
 def test_state_rolls_usage_on_new_day():
     state = AgentState(
         current_date="2026-06-26",

@@ -146,6 +146,23 @@ def test_service_core_can_apply_limit_command_without_network_dependency(tmp_pat
     assert events == [("policy.accepted", {"version": 1})]
 
 
+def test_service_core_loads_utf8_bom_policy_file(tmp_path):
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(
+        __import__("json").dumps(make_policy(limit=45).to_dict()),
+        encoding="utf-8-sig",
+    )
+    core = KidServiceCore(
+        policy_path=policy_path,
+        state_path=tmp_path / "state.json",
+        username_provider=lambda: "kid",
+        now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
+        helper_sender=lambda message: None,
+    )
+
+    assert core.load_policy().daily_limit_minutes == 45
+
+
 def test_service_core_logs_apply_policy_command(tmp_path):
     events = []
     policy = make_policy(limit=20)

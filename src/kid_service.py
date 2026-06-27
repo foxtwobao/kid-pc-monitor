@@ -43,7 +43,7 @@ class KidServiceCore:
     def load_policy(self) -> Policy | None:
         if not self.policy_path.exists():
             return None
-        return Policy.from_dict(json.loads(self.policy_path.read_text(encoding="utf-8")))
+        return Policy.from_dict(json.loads(self.policy_path.read_text(encoding="utf-8-sig")))
 
     def save_policy(self, policy: Policy) -> None:
         policy.validate()

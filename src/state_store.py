@@ -62,7 +62,7 @@ class StateStore:
     def load(self) -> AgentState:
         if not self.path.exists():
             return AgentState.default()
-        with self.path.open("r", encoding="utf-8") as handle:
+        with self.path.open("r", encoding="utf-8-sig") as handle:
             return AgentState.from_dict(json.load(handle)).for_today()
 
     def save(self, state: AgentState) -> None:
