@@ -92,6 +92,18 @@ def test_exempt_user_is_not_locked():
     assert decision.reason is None
 
 
+def test_monitored_user_matches_windows_domain_qualified_name():
+    decision = evaluate_policy(
+        policy=make_policy(limit=60),
+        state=make_state(seconds=3600),
+        username="DESKTOP\\kid",
+        now=datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert decision.should_lock is True
+    assert decision.reason == "daily_limit"
+
+
 def test_service_core_requests_lock_when_policy_says_lock(tmp_path):
     sent_messages = []
     policy_path = tmp_path / "policy.json"
@@ -197,3 +209,31 @@ def test_service_core_locks_after_locally_accounted_usage_reaches_limit(tmp_path
 
     assert core.state.usage_seconds_by_user["kid"] == 60
     assert sent_messages[-1] == {"type": "lock", "reason": "daily_limit"}
+
+
+def test_service_core_clears_stale_lock_reason_when_policy_no_longer_locks(tmp_path):
+    sent_messages = []
+    policy_path = tmp_path / "policy.json"
+    state_path = tmp_path / "state.json"
+    policy_path.write_text(__import__("json").dumps(make_policy(limit=60).to_dict()), encoding="utf-8")
+    core = KidServiceCore(
+        policy_path=policy_path,
+        state_path=state_path,
+        username_provider=lambda: "kid",
+        now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
+        helper_sender=sent_messages.append,
+    )
+    core.state = make_state(seconds=10)
+    core.state = type(core.state)(
+        current_date=core.state.current_date,
+        usage_seconds_by_user=core.state.usage_seconds_by_user,
+        active_lock_reason="daily_limit",
+        last_policy_version=core.state.last_policy_version,
+        unsent_event_cursor=core.state.unsent_event_cursor,
+        helper_last_seen_at=core.state.helper_last_seen_at,
+    )
+
+    core.handle_clear_usage_limit({})
+    core.tick()
+
+    assert core.state.active_lock_reason is None

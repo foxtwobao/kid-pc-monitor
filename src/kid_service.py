@@ -83,6 +83,15 @@ class KidServiceCore:
         elif decision.warning_minutes is not None and decision.warning_minutes not in self.sent_warnings:
             self.sent_warnings.add(decision.warning_minutes)
             self.helper_sender({"type": "warning", "minutes": decision.warning_minutes})
+        elif self.state.active_lock_reason is not None:
+            self.state = AgentState(
+                current_date=self.state.current_date,
+                usage_seconds_by_user=self.state.usage_seconds_by_user,
+                active_lock_reason=None,
+                last_policy_version=policy.policy_version,
+                unsent_event_cursor=self.state.unsent_event_cursor,
+                helper_last_seen_at=self.state.helper_last_seen_at,
+            )
         self.state_store.save(self.state)
 
     def account_usage(self, username: str, now: datetime) -> None:

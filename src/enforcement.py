@@ -25,12 +25,38 @@ def _inside_window(now_time: time, start: time, end: time) -> bool:
     return now_time >= start or now_time < end
 
 
+def _username_variants(username: str) -> set[str]:
+    normalized = username.strip()
+    variants = {normalized, normalized.lower()}
+    if "\\" in normalized:
+        short = normalized.rsplit("\\", 1)[1]
+        variants.update({short, short.lower()})
+    if "@" in normalized:
+        short = normalized.split("@", 1)[0]
+        variants.update({short, short.lower()})
+    return variants
+
+
+def _name_matches(configured: str, actual_variants: set[str]) -> bool:
+    configured_name = configured.strip()
+    return configured_name in actual_variants or configured_name.lower() in actual_variants
+
+
 def _user_is_monitored(policy: Policy, username: str) -> bool:
+    variants = _username_variants(username)
     if policy.monitored_users:
-        return username in policy.monitored_users
+        return any(_name_matches(user, variants) for user in policy.monitored_users)
     if policy.exempt_users:
-        return username not in policy.exempt_users
+        return not any(_name_matches(user, variants) for user in policy.exempt_users)
     return True
+
+
+def _usage_seconds_for_user(state: AgentState, username: str) -> int:
+    variants = _username_variants(username)
+    for key, seconds in state.usage_seconds_by_user.items():
+        if _name_matches(key, variants):
+            return seconds
+    return 0
 
 
 def evaluate_policy(
@@ -48,7 +74,7 @@ def evaluate_policy(
             return EnforcementDecision(True, "bedtime", None)
 
     if policy.daily_limit_minutes is not None:
-        used_seconds = state.usage_seconds_by_user.get(username, 0)
+        used_seconds = _usage_seconds_for_user(state, username)
         limit_seconds = policy.daily_limit_minutes * 60
         remaining_seconds = limit_seconds - used_seconds
         if remaining_seconds <= 0:
