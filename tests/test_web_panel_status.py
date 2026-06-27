@@ -9,6 +9,7 @@ from src.web_panel import (
     record_pending_command,
     save_pending_commands,
     save_device_secret,
+    load_device_profiles,
     sync_pending_command,
     time_remaining_from_status,
     app,
@@ -95,8 +96,10 @@ def test_sync_pending_command_updates_disk_after_success(tmp_path):
 
 def test_pair_endpoint_persists_child_secret(tmp_path, monkeypatch):
     secret_file = tmp_path / "device_secrets.json"
+    profile_file = tmp_path / "device_profiles.json"
     monkeypatch.setenv("KID_PC_PAIRING_TOKEN", "pair-me")
     monkeypatch.setenv("KID_PC_DEVICE_SECRETS_FILE", str(secret_file))
+    monkeypatch.setenv("KID_PC_DEVICE_PROFILES_FILE", str(profile_file))
     DEVICE_SECRETS.clear()
 
     response = app.test_client().post(
@@ -106,6 +109,7 @@ def test_pair_endpoint_persists_child_secret(tmp_path, monkeypatch):
             "ip": "192.168.10.251",
             "hostname": "kid-laptop",
             "secret": "a" * 64,
+            "monitored_users": ["kid"],
         },
     )
 
@@ -113,6 +117,9 @@ def test_pair_endpoint_persists_child_secret(tmp_path, monkeypatch):
     assert response.get_json()["success"] is True
     assert configured_device_secrets()["192.168.10.251"] == "a" * 64
     assert '"192.168.10.251"' in secret_file.read_text(encoding="utf-8")
+    profiles = load_device_profiles(profile_file)
+    assert profiles["192.168.10.251"]["hostname"] == "kid-laptop"
+    assert profiles["192.168.10.251"]["monitored_users"] == ["kid"]
 
 
 def test_pair_endpoint_rejects_wrong_token(tmp_path, monkeypatch):

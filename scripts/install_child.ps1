@@ -1,3 +1,125 @@
+function Get-KidPCMonitorShortUserName {
+    param([string]$UserName)
+    if (-not $UserName) {
+        return ""
+    }
+    return ($UserName -split "\\")[-1].Trim()
+}
+
+function Test-KidPCMonitorLocalAdmin {
+    param([string]$UserName)
+    $shortName = Get-KidPCMonitorShortUserName $UserName
+    if (-not $shortName) {
+        return $false
+    }
+    try {
+        $adminGroup = Get-LocalGroup -ErrorAction Stop |
+            Where-Object { $_.SID -eq "S-1-5-32-544" } |
+            Select-Object -First 1
+        if (-not $adminGroup) {
+            return $false
+        }
+        $adminNames = Get-LocalGroupMember -Group $adminGroup.Name -ErrorAction Stop |
+            ForEach-Object { Get-KidPCMonitorShortUserName $_.Name }
+        return $adminNames -contains $shortName
+    } catch {
+        return $false
+    }
+}
+
+function Get-KidPCMonitorSelectableUsers {
+    $systemUsers = @("Administrator", "DefaultAccount", "Guest", "WDAGUtilityAccount")
+    try {
+        return @(Get-LocalUser |
+            Where-Object { $_.Enabled -and $_.Name -notin $systemUsers } |
+            Sort-Object -Property Name |
+            ForEach-Object {
+                [PSCustomObject]@{
+                    Name = $_.Name
+                    IsAdmin = Test-KidPCMonitorLocalAdmin $_.Name
+                    LastLogon = $_.LastLogon
+                }
+            })
+    } catch {
+        return @()
+    }
+}
+
+function Get-KidPCMonitorChildUser {
+    param([string]$RequestedChildUser)
+
+    if ($RequestedChildUser) {
+        return Get-KidPCMonitorShortUserName $RequestedChildUser
+    }
+
+    $users = @(Get-KidPCMonitorSelectableUsers)
+    if ($users.Count -eq 0) {
+        $fallback = Get-KidPCMonitorShortUserName ([Security.Principal.WindowsIdentity]::GetCurrent().Name)
+        Write-Host "Could not list local users. Falling back to current user: $fallback"
+        return $fallback
+    }
+
+    Write-Host ""
+    Write-Host "Select the Windows user to monitor:"
+    for ($index = 0; $index -lt $users.Count; $index++) {
+        $user = $users[$index]
+        $suffix = ""
+        if ($user.IsAdmin) {
+            $suffix = " (admin)"
+        }
+        Write-Host ("  [{0}] {1}{2}" -f ($index + 1), $user.Name, $suffix)
+    }
+
+    while ($true) {
+        $choice = Read-Host "Enter user number"
+        $number = 0
+        if ([int]::TryParse($choice, [ref]$number) -and $number -ge 1 -and $number -le $users.Count) {
+            return $users[$number - 1].Name
+        }
+        Write-Host "Invalid selection. Enter a number from 1 to $($users.Count)."
+    }
+}
+
+function Set-KidPCMonitorInitialPolicy {
+    param([string]$ChildUser)
+
+    if (-not $ChildUser) {
+        return
+    }
+
+    $policyPath = "C:\ProgramData\KidPCMonitor\policy.json"
+    if (Test-Path $policyPath) {
+        $policy = Get-Content -Raw -Path $policyPath | ConvertFrom-Json
+        if (-not ($policy.PSObject.Properties.Name -contains "policy_version")) {
+            $policy | Add-Member -NotePropertyName "policy_version" -NotePropertyValue 0
+        }
+        if (-not ($policy.PSObject.Properties.Name -contains "updated_at")) {
+            $policy | Add-Member -NotePropertyName "updated_at" -NotePropertyValue ""
+        }
+        if ($policy.PSObject.Properties.Name -contains "monitored_users") {
+            $policy.PSObject.Properties.Remove("monitored_users")
+        }
+        $policy | Add-Member -NotePropertyName "monitored_users" -NotePropertyValue @($ChildUser)
+        $policy.policy_version = [int]$policy.policy_version + 1
+        $policy.updated_at = [DateTimeOffset]::Now.ToString("o")
+    } else {
+        $policy = [ordered]@{
+            device_id = $env:COMPUTERNAME
+            policy_version = 1
+            daily_limit_minutes = $null
+            bedtime_windows = @()
+            monitored_users = @($ChildUser)
+            exempt_users = @()
+            warning_minutes = @(15, 5, 1)
+            temporary_extensions = @{}
+            parent_panel_allowed_ips = @()
+            updated_at = [DateTimeOffset]::Now.ToString("o")
+        }
+    }
+    $json = $policy | ConvertTo-Json -Depth 8
+    [System.IO.File]::WriteAllText($policyPath, $json, [System.Text.UTF8Encoding]::new($false))
+}
+
 function Install-KidPCMonitorChild {
     param(
         [Parameter(Mandatory = $true)]
@@ -5,6 +127,8 @@ function Install-KidPCMonitorChild {
 
         [Parameter(Mandatory = $true)]
         [string]$PairingToken,
+
+        [string]$ChildUser = "",
 
         [string]$RepoZipUrl = "https://github.com/foxtwobao/kid-pc-monitor/archive/refs/heads/main.zip"
     )
@@ -46,6 +170,14 @@ function Install-KidPCMonitorChild {
     Write-Host "Installing child-side Windows service..."
     & $python (Join-Path $repoDir.FullName "scripts\install_service.py") --parent-ip $parentHost --uninstall-token $PairingToken
 
+    $selectedChildUser = Get-KidPCMonitorChildUser -RequestedChildUser $ChildUser
+    if ($selectedChildUser) {
+        Write-Host "Monitoring Windows user: $selectedChildUser"
+        Set-KidPCMonitorInitialPolicy -ChildUser $selectedChildUser
+    } else {
+        Write-Host "No specific child user detected; service will monitor all non-exempt users."
+    }
+
     $secretPath = "C:\ProgramData\KidPCMonitor\agent.secret"
     $secret = (Get-Content $secretPath -Raw).Trim()
     $childIp = $null
@@ -60,6 +192,10 @@ function Install-KidPCMonitorChild {
         token = $PairingToken
         hostname = $env:COMPUTERNAME
         secret = $secret
+        monitored_users = @()
+    }
+    if ($selectedChildUser) {
+        $body.monitored_users = @($selectedChildUser)
     }
     if ($childIp) {
         $body.ip = $childIp
@@ -76,4 +212,7 @@ function Install-KidPCMonitorChild {
     Write-Host "Kid PC Monitor child service installed and paired."
     Write-Host "Service: KidPCMonitorService"
     Write-Host "Parent:  $ParentUrl"
+    if ($selectedChildUser) {
+        Write-Host "User:    $selectedChildUser"
+    }
 }

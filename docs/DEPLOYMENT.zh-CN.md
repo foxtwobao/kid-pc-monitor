@@ -31,11 +31,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "iex (irm 'https://raw.gi
 - 下载项目
 - 安装依赖
 - 安装 `KidPCMonitorService`
+- 列出本机 Windows 用户，让安装人员选择要监控的孩子账号
 - 配置 Windows 防火墙，只允许家长端访问 TCP `9999`
 - 生成孩子端密钥
 - 自动把孩子端密钥注册到服务端
 
 不需要手工复制 `agent.secret`。
+
+用户选择规则：
+
+1. 安装脚本会列出本机启用的 Windows 用户。
+2. 输入序号选择要限制时长的孩子账号。
+3. 如果你已经知道孩子账号，并且想跳过交互选择，可以在孩子端命令末尾加：
+
+```powershell
+-ChildUser "孩子Windows用户名"
+```
+
+安装脚本会把这个用户写入孩子端本地策略的 `monitored_users`，后续家长端设置时长/睡眠时间时会沿用这个用户范围。
 
 ## 前置要求
 
@@ -68,6 +81,12 @@ Run this ONE command on each child Windows PC...
 
 ```text
 ~/.kid-pc-monitor/app/device_secrets.json
+```
+
+孩子端用户信息会保存在：
+
+```text
+~/.kid-pc-monitor/app/device_profiles.json
 ```
 
 ### 孩子端

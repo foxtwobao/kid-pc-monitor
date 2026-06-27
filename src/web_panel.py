@@ -18,6 +18,7 @@ last_scan_time = None
 PENDING_COMMANDS = {}
 PENDING_COMMANDS_FILE = os.environ.get("KID_PC_PENDING_COMMANDS_FILE", "pending_commands.json")
 DEVICE_SECRETS_FILE = os.environ.get("KID_PC_DEVICE_SECRETS_FILE", "device_secrets.json")
+DEVICE_PROFILES_FILE = os.environ.get("KID_PC_DEVICE_PROFILES_FILE", "device_profiles.json")
 PAIRING_TOKEN_FILE = os.environ.get("KID_PC_PAIRING_TOKEN_FILE", "pairing.token")
 
 # Custom PC names (optional) - Add your kids' PC names here
@@ -76,6 +77,32 @@ def save_device_secret(ip, secret, secrets_file=None):
     secrets_map[str(ip)] = secret_value
     atomic_write_json(path, secrets_map)
     return secrets_map
+
+
+def load_device_profiles(profiles_file=None):
+    path = os.fspath(profiles_file or os.environ.get("KID_PC_DEVICE_PROFILES_FILE", DEVICE_PROFILES_FILE))
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_device_profile(ip, hostname, monitored_users, profiles_file=None):
+    ipaddress.ip_address(ip)
+    users = [str(user).strip() for user in monitored_users if str(user).strip()]
+    path = profiles_file or os.environ.get("KID_PC_DEVICE_PROFILES_FILE", DEVICE_PROFILES_FILE)
+    profiles = load_device_profiles(path)
+    profiles[str(ip)] = {
+        "hostname": str(hostname or f"PC at {ip}"),
+        "monitored_users": users,
+        "paired_at": datetime.now().isoformat(),
+    }
+    atomic_write_json(path, profiles)
+    return profiles
 
 
 def current_pairing_token():
@@ -434,8 +461,12 @@ def pair_child():
     ip = str(data.get("ip") or request.remote_addr or "").strip()
     secret = str(data.get("secret") or "").strip()
     hostname = str(data.get("hostname") or f"PC at {ip}").strip()
+    monitored_users = data.get("monitored_users") or []
+    if isinstance(monitored_users, str):
+        monitored_users = [monitored_users]
     try:
         save_device_secret(ip, secret)
+        save_device_profile(ip, hostname, monitored_users)
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
 
@@ -445,8 +476,9 @@ def pair_child():
         "locked": False,
         "last_seen": datetime.now(),
         "pending_sync": ip in PENDING_COMMANDS,
+        "monitored_users": [str(user).strip() for user in monitored_users if str(user).strip()],
     }
-    return jsonify({"success": True, "ip": ip, "hostname": hostname})
+    return jsonify({"success": True, "ip": ip, "hostname": hostname, "monitored_users": monitored_users})
 
 # HTML Templates
 INDEX_TEMPLATE = '''
