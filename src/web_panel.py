@@ -1,9 +1,13 @@
 from flask import Flask, render_template, request, jsonify, redirect, url_for
+import json
+import os
 import socket
 import threading
 import ipaddress
 import time
 from datetime import datetime
+
+from src.agent_auth import sign_message
 
 app = Flask(__name__)
 
@@ -16,6 +20,83 @@ CUSTOM_PC_NAMES = {
     # Example: '192.168.1.105': 'Tommy\'s Laptop',
     # Example: '192.168.1.112': 'Sarah\'s Desktop',
 }
+
+# Fill this with each child PC's secret from C:\ProgramData\KidPCMonitor\agent.secret.
+# You can also set KID_PC_DEVICE_SECRETS to a JSON object mapping IPs to hex secrets.
+DEVICE_SECRETS = {
+    # Example: '192.168.10.251': '0123abcd...',
+}
+
+
+def configured_device_secrets():
+    secrets = dict(DEVICE_SECRETS)
+    env_value = os.environ.get("KID_PC_DEVICE_SECRETS")
+    if env_value:
+        try:
+            secrets.update(json.loads(env_value))
+        except json.JSONDecodeError:
+            print("Invalid KID_PC_DEVICE_SECRETS JSON; ignoring environment value")
+    return secrets
+
+
+def device_secret_for_host(host):
+    return configured_device_secrets().get(host)
+
+
+def build_signed_command(body, secret_hex, now=None, nonce=None):
+    return sign_message(body, bytes.fromhex(secret_hex), now=now, nonce=nonce)
+
+
+def command_body_from_legacy(command):
+    if isinstance(command, dict):
+        return command
+    if command == "LOCK":
+        return {"command": "lock", "reason": "manual"}
+    if command == "GET_STATUS":
+        return {"command": "status"}
+    if command.startswith("MESSAGE:"):
+        return {"command": "message", "message": command.split(":", 1)[1]}
+    if command.startswith("SET_LIMIT:"):
+        return {"command": "set_limit", "minutes": int(command.split(":", 1)[1])}
+    if command.startswith("ADD_LOCK_TIME:"):
+        return {"command": "add_lock_time", "time": command.split(":", 1)[1]}
+    if command == "CLEAR_USAGE_LIMIT":
+        return {"command": "clear_usage_limit"}
+    if command == "CLEAR_LOCK_TIMES":
+        return {"command": "clear_lock_times"}
+    if command == "CLEAR_ALL":
+        return {"command": "clear_all"}
+    return {"command": command.lower()}
+
+
+def send_signed_body(host, body, port=9999):
+    secret_hex = device_secret_for_host(host)
+    if not secret_hex:
+        return False, "No device secret configured"
+    try:
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.settimeout(5)
+        client.connect((host, port))
+        envelope = build_signed_command(body, secret_hex)
+        client.send((json.dumps(envelope) + "\n").encode("utf-8"))
+        response = client.recv(4096).decode()
+        client.close()
+        return True, response
+    except Exception as e:
+        return False, str(e)
+
+
+def query_status(ip, port=9999):
+    success, response = send_signed_body(ip, {"command": "status"}, port=port)
+    if not success:
+        return None
+    try:
+        payload = json.loads(response)
+    except json.JSONDecodeError:
+        return None
+    if not payload.get("success"):
+        return None
+    return payload.get("body", {})
 
 def get_local_ip():
     """Get the local IP address of this machine"""
@@ -30,61 +111,29 @@ def get_local_ip():
 
 def check_pc_status(ip, port=9999):
     """Check if a PC is locked"""
-    try:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Checking status of {ip}")
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(2)
-        s.connect((ip, port))
-        s.send(b"GET_STATUS")
-        status = s.recv(1024).decode().strip()
-        s.close()
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Status of {ip}: {status}")
-        return status
-    except Exception as e:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Error checking {ip}: {e}")
+    status = query_status(ip, port=port)
+    if not status:
         return "UNKNOWN"
+    state = status.get("state", {})
+    return "LOCKED" if state.get("active_lock_reason") else "UNLOCKED"
 
 def get_current_user(ip, port=9999):
     """Get the current username logged in on the kid PC (as reported by the agent)."""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(2)
-        s.connect((ip, port))
-        s.send(b"GET_CURRENT_USER")
-        username = s.recv(1024).decode().strip()
-        s.close()
-        return username
-    except Exception as e:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Error getting user from {ip}: {e}")
-        return None
+    return None
 
 def get_usage_limit(ip, port=9999):
     """Get the current usage limit in minutes"""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(2)
-        s.connect((ip, port))
-        s.send(b"GET_USAGE_LIMIT")
-        limit = s.recv(1024).decode().strip()
-        s.close()
-        return None if limit == "None" else int(limit)
-    except Exception as e:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Error getting limit from {ip}: {e}")
-        return None
+    status = query_status(ip, port=port)
+    policy = status.get("policy") if status else None
+    return policy.get("daily_limit_minutes") if policy else None
 
 def get_lock_times(ip, port=9999):
     """Get scheduled lock times"""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(2)
-        s.connect((ip, port))
-        s.send(b"GET_LOCK_TIMES")
-        times = s.recv(1024).decode().strip()
-        s.close()
-        return None if times == "None" else times.split(',')
-    except Exception as e:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Error getting lock times from {ip}: {e}")
+    status = query_status(ip, port=port)
+    policy = status.get("policy") if status else None
+    if not policy:
         return None
+    return [window["start"] for window in policy.get("bedtime_windows", [])]
 
 def get_time_remaining(ip, port=9999):
     """Get time remaining until next lock"""
@@ -158,16 +207,8 @@ def scan_for_servers(port=9999):
 
 def send_command(host, command, port=9999):
     """Send a command to the remote PC"""
-    try:
-        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client.settimeout(5)
-        client.connect((host, port))
-        client.send(command.encode())
-        response = client.recv(1024)
-        client.close()
-        return True, response.decode()
-    except Exception as e:
-        return False, str(e)
+    body = command_body_from_legacy(command)
+    return send_signed_body(host, body, port=port)
 
 @app.route('/')
 def index():

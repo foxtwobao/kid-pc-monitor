@@ -40,3 +40,18 @@ def test_rejects_tampered_body():
 
     with pytest.raises(AuthError, match="signature"):
         verify_message(envelope, secret, now=int(time.time()), nonce_store=NonceStore())
+
+
+def test_web_panel_builds_signed_command():
+    from src.web_panel import build_signed_command
+
+    envelope = build_signed_command(
+        {"command": "lock"},
+        secret_hex="6465762d736563726574",
+        now=1000,
+        nonce="abc",
+    )
+
+    body = verify_message(envelope, b"dev-secret", now=1000, nonce_store=NonceStore())
+
+    assert body == {"command": "lock"}

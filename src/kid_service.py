@@ -7,7 +7,7 @@ import time
 from typing import Callable
 
 from src.enforcement import evaluate_policy
-from src.policy import Policy
+from src.policy import BedtimeWindow, Policy
 from src.state_store import AgentState, StateStore
 
 
@@ -38,6 +38,28 @@ class KidServiceCore:
         self.policy_path.parent.mkdir(parents=True, exist_ok=True)
         self.policy_path.write_text(json.dumps(policy.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
+    def default_policy(self) -> Policy:
+        return Policy(
+            device_id="local-device",
+            policy_version=0,
+            daily_limit_minutes=None,
+            bedtime_windows=[],
+            monitored_users=[],
+            exempt_users=[],
+            warning_minutes=[15, 5, 1],
+            temporary_extensions={},
+            parent_panel_allowed_ips=[],
+            updated_at=self.now_provider().isoformat(),
+        )
+
+    def next_policy(self, **changes) -> Policy:
+        current = self.load_policy() or self.default_policy()
+        data = current.to_dict()
+        data.update(changes)
+        data["policy_version"] = current.policy_version + 1
+        data["updated_at"] = self.now_provider().isoformat()
+        return Policy.from_dict(data)
+
     def tick(self) -> None:
         policy = self.load_policy()
         if policy is None:
@@ -64,6 +86,7 @@ class KidServiceCore:
         policy = self.load_policy()
         return {
             "policy_version": policy.policy_version if policy else 0,
+            "policy": policy.to_dict() if policy else None,
             "state": self.state.to_dict(),
         }
 
@@ -81,16 +104,67 @@ class KidServiceCore:
         self.state_store.save(self.state)
         return {"accepted_policy_version": policy.policy_version}
 
+    def accept_policy(self, policy: Policy) -> dict:
+        self.save_policy(policy)
+        self.state = AgentState(
+            current_date=self.state.current_date,
+            usage_seconds_by_user=self.state.usage_seconds_by_user,
+            active_lock_reason=self.state.active_lock_reason,
+            last_policy_version=policy.policy_version,
+            unsent_event_cursor=self.state.unsent_event_cursor,
+            helper_last_seen_at=self.state.helper_last_seen_at,
+        )
+        self.state_store.save(self.state)
+        return {"accepted_policy_version": policy.policy_version}
+
+    def handle_set_limit(self, body: dict) -> dict:
+        policy = self.next_policy(daily_limit_minutes=int(body["minutes"]))
+        self.sent_warnings.clear()
+        response = self.accept_policy(policy)
+        response["daily_limit_minutes"] = policy.daily_limit_minutes
+        return response
+
+    def handle_add_lock_time(self, body: dict) -> dict:
+        lock_time = body["time"]
+        current = self.load_policy() or self.default_policy()
+        windows = current.bedtime_windows + [BedtimeWindow(start=lock_time, end="23:59")]
+        policy = self.next_policy(bedtime_windows=[window.to_dict() for window in windows])
+        response = self.accept_policy(policy)
+        response["lock_times"] = [window.start for window in policy.bedtime_windows]
+        return response
+
+    def handle_clear_usage_limit(self, _body: dict) -> dict:
+        policy = self.next_policy(daily_limit_minutes=None)
+        return self.accept_policy(policy)
+
+    def handle_clear_lock_times(self, _body: dict) -> dict:
+        policy = self.next_policy(bedtime_windows=[])
+        return self.accept_policy(policy)
+
+    def handle_clear_all(self, _body: dict) -> dict:
+        policy = self.next_policy(daily_limit_minutes=None, bedtime_windows=[])
+        return self.accept_policy(policy)
+
     def handle_lock(self, body: dict) -> dict:
         reason = body.get("reason", "manual")
         self.helper_sender({"type": "lock", "reason": reason})
         return {"lock_requested": True, "reason": reason}
 
+    def handle_message(self, body: dict) -> dict:
+        self.helper_sender({"type": "message", "text": str(body.get("message", ""))})
+        return {"message_sent": True}
+
     def handlers(self) -> dict[str, Callable[[dict], dict]]:
         return {
             "status": self.handle_status,
             "apply_policy": self.handle_apply_policy,
+            "set_limit": self.handle_set_limit,
+            "add_lock_time": self.handle_add_lock_time,
+            "clear_usage_limit": self.handle_clear_usage_limit,
+            "clear_lock_times": self.handle_clear_lock_times,
+            "clear_all": self.handle_clear_all,
             "lock": self.handle_lock,
+            "message": self.handle_message,
         }
 
     def run_forever(self, interval_seconds: int = 1) -> None:

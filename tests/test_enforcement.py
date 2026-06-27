@@ -111,3 +111,37 @@ def test_service_core_requests_lock_when_policy_says_lock(tmp_path):
     core.tick()
 
     assert sent_messages[-1] == {"type": "lock", "reason": "daily_limit"}
+
+
+def test_service_core_can_apply_limit_command_without_network_dependency(tmp_path):
+    sent_messages = []
+    policy_path = tmp_path / "policy.json"
+    state_path = tmp_path / "state.json"
+    core = KidServiceCore(
+        policy_path=policy_path,
+        state_path=state_path,
+        username_provider=lambda: "kid",
+        now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
+        helper_sender=sent_messages.append,
+    )
+
+    response = core.handle_set_limit({"minutes": 30})
+
+    assert response == {"accepted_policy_version": 1, "daily_limit_minutes": 30}
+    assert core.load_policy().daily_limit_minutes == 30
+
+
+def test_service_core_can_send_parent_message_to_helper(tmp_path):
+    sent_messages = []
+    core = KidServiceCore(
+        policy_path=tmp_path / "policy.json",
+        state_path=tmp_path / "state.json",
+        username_provider=lambda: "kid",
+        now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
+        helper_sender=sent_messages.append,
+    )
+
+    response = core.handle_message({"message": "Dinner time"})
+
+    assert response == {"message_sent": True}
+    assert sent_messages == [{"type": "message", "text": "Dinner time"}]
