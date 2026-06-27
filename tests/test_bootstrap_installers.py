@@ -35,5 +35,9 @@ def test_child_bootstrap_installs_service_and_pairs_with_parent():
     assert "agent.secret" in script
     assert "policy.json" in script
     assert "monitored_users" in script
+    assert "function Test-KidPCMonitorChildConnectivity" in script
+    assert "Get-NetFirewallRule" in script
+    assert "Get-NetTCPConnection" in script
+    assert "LocalPort 9999" in script
     assert "/api/pair" in script
     assert "Invoke-RestMethod" in script

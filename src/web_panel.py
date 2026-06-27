@@ -106,6 +106,31 @@ def save_device_profile(ip, hostname, monitored_users, profiles_file=None):
     return profiles
 
 
+def ensure_paired_devices_visible():
+    profiles = load_device_profiles()
+    secrets = load_device_secrets()
+    for ip in sorted(set(profiles) | set(secrets)):
+        profile = profiles.get(ip, {}) if isinstance(profiles.get(ip, {}), dict) else {}
+        entry = discovered_pcs.setdefault(
+            str(ip),
+            {
+                "hostname": str(profile.get("hostname") or f"PC at {ip}"),
+                "status": "paired",
+                "locked": False,
+                "last_seen": None,
+            },
+        )
+        if not entry.get("hostname") or entry.get("hostname", "").startswith("PC at "):
+            entry["hostname"] = str(profile.get("hostname") or f"PC at {ip}")
+        entry["pending_sync"] = str(ip) in PENDING_COMMANDS
+        entry["monitored_users"] = [
+            str(user).strip()
+            for user in profile.get("monitored_users", [])
+            if str(user).strip()
+        ]
+    return discovered_pcs
+
+
 def current_pairing_token():
     env_value = os.environ.get("KID_PC_PAIRING_TOKEN")
     if env_value:
@@ -383,8 +408,12 @@ def send_command(host, command, port=9999):
 @app.route('/')
 def index():
     """Main page showing all discovered PCs"""
+    ensure_paired_devices_visible()
+
     # Update lock status and current user for all PCs
-    for ip in discovered_pcs:
+    for ip in list(discovered_pcs.keys()):
+        if ip not in discovered_pcs:
+            continue
         status = check_pc_status(ip)
         discovered_pcs[ip]['locked'] = (status == "LOCKED")
 

@@ -24,6 +24,8 @@ def test_firewall_script_can_scope_parent_ip():
     assert "Kid PC Monitor Agent" in script
     assert "-LocalPort 9999" in script
     assert '-RemoteAddress "192.168.10.10"' in script
+    assert "-Profile Any" in script
+    assert "-Enabled True" in script
 
 
 def test_service_recovery_command_restarts_service():

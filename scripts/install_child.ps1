@@ -120,6 +120,49 @@ function Set-KidPCMonitorInitialPolicy {
     [System.IO.File]::WriteAllText($policyPath, $json, [System.Text.UTF8Encoding]::new($false))
 }
 
+function Test-KidPCMonitorChildConnectivity {
+    param([string]$ParentHost)
+
+    $service = Get-Service -Name "KidPCMonitorService" -ErrorAction SilentlyContinue
+    if (-not $service) {
+        throw "KidPCMonitorService was not installed."
+    }
+    if ($service.Status -ne "Running") {
+        Start-Service -Name "KidPCMonitorService" -ErrorAction SilentlyContinue
+        $service.WaitForStatus("Running", [TimeSpan]::FromSeconds(30))
+        $service = Get-Service -Name "KidPCMonitorService"
+    }
+    if ($service.Status -ne "Running") {
+        throw "KidPCMonitorService is not running after installation."
+    }
+
+    $listener = Get-NetTCPConnection -LocalPort 9999 -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $listener) {
+        throw "KidPCMonitorService is running, but LocalPort 9999 is not listening."
+    }
+
+    $firewallRule = Get-NetFirewallRule -DisplayName "Kid PC Monitor Agent" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Enabled -eq "True" -and $_.Direction -eq "Inbound" -and $_.Action -eq "Allow" } |
+        Select-Object -First 1
+    if (-not $firewallRule) {
+        throw "Windows Firewall rule 'Kid PC Monitor Agent' is missing or disabled."
+    }
+
+    $portFilter = $firewallRule | Get-NetFirewallPortFilter
+    if (-not ($portFilter | Where-Object { $_.LocalPort -eq "9999" })) {
+        throw "Windows Firewall rule exists, but does not allow LocalPort 9999."
+    }
+
+    $addressFilter = $firewallRule | Get-NetFirewallAddressFilter
+    $remoteAddresses = @($addressFilter.RemoteAddress)
+    if ($ParentHost -and $remoteAddresses -notcontains "Any" -and $remoteAddresses -notcontains $ParentHost) {
+        throw "Windows Firewall rule exists, but RemoteAddress is '$($remoteAddresses -join ',')', not '$ParentHost'."
+    }
+
+    Write-Host "Child service is running, LocalPort 9999 is listening, and firewall allows parent host $ParentHost."
+}
+
 function Install-KidPCMonitorChild {
     param(
         [Parameter(Mandatory = $true)]
@@ -169,6 +212,7 @@ function Install-KidPCMonitorChild {
 
     Write-Host "Installing child-side Windows service..."
     & $python (Join-Path $repoDir.FullName "scripts\install_service.py") --parent-ip $parentHost --uninstall-token $PairingToken
+    Test-KidPCMonitorChildConnectivity -ParentHost $parentHost
 
     $selectedChildUser = Get-KidPCMonitorChildUser -RequestedChildUser $ChildUser
     if ($selectedChildUser) {

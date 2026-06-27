@@ -5,6 +5,8 @@ from src.web_panel import (
     command_body_from_legacy,
     configured_device_secrets,
     current_user_from_status,
+    discovered_pcs,
+    ensure_paired_devices_visible,
     is_policy_command,
     load_pending_commands,
     panel_port,
@@ -141,6 +143,47 @@ def test_pair_endpoint_persists_child_secret(tmp_path, monkeypatch):
     profiles = load_device_profiles(profile_file)
     assert profiles["192.168.10.251"]["hostname"] == "kid-laptop"
     assert profiles["192.168.10.251"]["monitored_users"] == ["kid"]
+
+
+def test_index_shows_paired_device_from_disk(tmp_path, monkeypatch):
+    secret_file = tmp_path / "device_secrets.json"
+    profile_file = tmp_path / "device_profiles.json"
+    secret_file.write_text('{"192.168.10.251": "' + "a" * 64 + '"}', encoding="utf-8")
+    profile_file.write_text(
+        '{"192.168.10.251": {"hostname": "kid-laptop", "monitored_users": ["kid"]}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KID_PC_DEVICE_SECRETS_FILE", str(secret_file))
+    monkeypatch.setenv("KID_PC_DEVICE_PROFILES_FILE", str(profile_file))
+    monkeypatch.setattr("src.web_panel.check_pc_status", lambda _ip: "UNKNOWN")
+    monkeypatch.setattr("src.web_panel.get_current_user", lambda _ip: None)
+    discovered_pcs.clear()
+
+    response = app.test_client().get("/")
+
+    assert response.status_code == 200
+    assert b"kid-laptop" in response.data
+    assert b"192.168.10.251" in response.data
+
+
+def test_ensure_paired_devices_visible_keeps_existing_runtime_status(tmp_path, monkeypatch):
+    secret_file = tmp_path / "device_secrets.json"
+    profile_file = tmp_path / "device_profiles.json"
+    secret_file.write_text('{"192.168.10.251": "' + "a" * 64 + '"}', encoding="utf-8")
+    profile_file.write_text(
+        '{"192.168.10.251": {"hostname": "kid-laptop", "monitored_users": ["kid"]}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KID_PC_DEVICE_SECRETS_FILE", str(secret_file))
+    monkeypatch.setenv("KID_PC_DEVICE_PROFILES_FILE", str(profile_file))
+    discovered_pcs.clear()
+    discovered_pcs["192.168.10.251"] = {"hostname": "old-name", "locked": True}
+
+    ensure_paired_devices_visible()
+
+    assert discovered_pcs["192.168.10.251"]["hostname"] == "old-name"
+    assert discovered_pcs["192.168.10.251"]["locked"] is True
+    assert discovered_pcs["192.168.10.251"]["monitored_users"] == ["kid"]
 
 
 def test_pair_endpoint_rejects_wrong_token(tmp_path, monkeypatch):

@@ -40,7 +40,7 @@ def firewall_script(parent_ip: str | None) -> str:
     remote_filter = f'-RemoteAddress "{parent_ip}"' if parent_ip else ""
     return rf"""
 Remove-NetFirewallRule -DisplayName "Kid PC Monitor Agent" -ErrorAction SilentlyContinue
-New-NetFirewallRule -DisplayName "Kid PC Monitor Agent" -Direction Inbound -Protocol TCP -LocalPort 9999 {remote_filter} -Action Allow | Out-Null
+New-NetFirewallRule -DisplayName "Kid PC Monitor Agent" -Direction Inbound -Protocol TCP -LocalPort 9999 {remote_filter} -Profile Any -Action Allow -Enabled True | Out-Null
 """
 
 
