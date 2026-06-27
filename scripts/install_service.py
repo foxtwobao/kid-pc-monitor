@@ -6,6 +6,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 if __package__ in (None, ""):
@@ -42,23 +43,44 @@ def service_exists() -> bool:
     return result.returncode == 0
 
 
-def stop_existing_runtime() -> None:
+def service_state() -> str | None:
+    result = subprocess.run(["sc.exe", "query", SERVICE_NAME], check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        return None
+    for line in result.stdout.splitlines():
+        if "STATE" in line and ":" in line:
+            parts = line.split()
+            return parts[-1] if parts else None
+    return None
+
+
+def wait_for_service_stopped(timeout_seconds: int = 30) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        state = service_state()
+        if state in (None, "STOPPED"):
+            return
+        time.sleep(1)
+    raise RuntimeError(f"{SERVICE_NAME} did not stop within {timeout_seconds} seconds.")
+
+
+def stop_helper_processes() -> None:
     script = rf"""
-$service = Get-Service -Name "{SERVICE_NAME}" -ErrorAction SilentlyContinue
-if ($service) {{
-    if ($service.Status -ne "Stopped") {{
-        Stop-Service -Name "{SERVICE_NAME}" -Force -ErrorAction SilentlyContinue
-        $service.WaitForStatus("Stopped", [TimeSpan]::FromSeconds(30))
-    }}
-}}
 Get-CimInstance Win32_Process |
     Where-Object {{ $_.CommandLine -like "*KidPCMonitor*helper.py*" }} |
     ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}
 """
     subprocess.run(
         ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
-        check=True,
+        check=False,
     )
+
+
+def stop_existing_runtime() -> None:
+    if service_exists():
+        subprocess.run(["sc.exe", "stop", SERVICE_NAME], check=False, capture_output=True, text=True)
+        wait_for_service_stopped()
+    stop_helper_processes()
 
 
 def copy_agent_files() -> None:

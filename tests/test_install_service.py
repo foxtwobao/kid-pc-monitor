@@ -66,6 +66,26 @@ def test_ensure_pywin32_available_explains_missing_dependency(monkeypatch):
     assert "pywin32 is required" in str(excinfo.value)
 
 
+def test_stop_existing_runtime_tolerates_stop_command_failure_when_service_stops(monkeypatch):
+    commands = []
+    states = iter(["RUNNING", "STOPPED"])
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        if command[:2] == ["sc.exe", "query"]:
+            state = next(states)
+            return type("Result", (), {"returncode": 0, "stdout": f"STATE              : 4  {state}"})()
+        return type("Result", (), {"returncode": 1, "stdout": ""})()
+
+    monkeypatch.setattr(install_service.subprocess, "run", fake_run)
+    monkeypatch.setattr(install_service.time, "sleep", lambda _seconds: None)
+
+    install_service.stop_existing_runtime()
+
+    assert ["sc.exe", "stop", install_service.SERVICE_NAME] in commands
+    assert any(command[0] == "powershell.exe" for command in commands)
+
+
 def test_install_service_installs_new_service_with_current_python(monkeypatch):
     calls = []
     monkeypatch.setattr(install_service, "PROGRAM_DIR", install_service.Path(r"C:\Program Files\KidPCMonitor"))
