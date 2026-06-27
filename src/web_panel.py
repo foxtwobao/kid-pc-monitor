@@ -17,6 +17,8 @@ discovered_pcs = {}
 last_scan_time = None
 PENDING_COMMANDS = {}
 PENDING_COMMANDS_FILE = os.environ.get("KID_PC_PENDING_COMMANDS_FILE", "pending_commands.json")
+DEVICE_SECRETS_FILE = os.environ.get("KID_PC_DEVICE_SECRETS_FILE", "device_secrets.json")
+PAIRING_TOKEN_FILE = os.environ.get("KID_PC_PAIRING_TOKEN_FILE", "pairing.token")
 
 # Custom PC names (optional) - Add your kids' PC names here
 CUSTOM_PC_NAMES = {
@@ -24,8 +26,9 @@ CUSTOM_PC_NAMES = {
     # Example: '192.168.1.112': 'Sarah\'s Desktop',
 }
 
-# Fill this with each child PC's secret from C:\ProgramData\KidPCMonitor\agent.secret.
-# You can also set KID_PC_DEVICE_SECRETS to a JSON object mapping IPs to hex secrets.
+# Child secrets are normally written automatically by the one-line pairing flow
+# into DEVICE_SECRETS_FILE. You can still set KID_PC_DEVICE_SECRETS manually to
+# override or add entries with a JSON object mapping IPs to hex secrets.
 DEVICE_SECRETS = {
     # Example: '192.168.10.251': '0123abcd...',
 }
@@ -33,6 +36,7 @@ DEVICE_SECRETS = {
 
 def configured_device_secrets():
     secrets = dict(DEVICE_SECRETS)
+    secrets.update(load_device_secrets())
     env_value = os.environ.get("KID_PC_DEVICE_SECRETS")
     if env_value:
         try:
@@ -44,6 +48,48 @@ def configured_device_secrets():
 
 def device_secret_for_host(host):
     return configured_device_secrets().get(host)
+
+
+def load_device_secrets(secrets_file=None):
+    path = os.fspath(secrets_file or os.environ.get("KID_PC_DEVICE_SECRETS_FILE", DEVICE_SECRETS_FILE))
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {str(ip): str(secret) for ip, secret in data.items()}
+
+
+def save_device_secret(ip, secret, secrets_file=None):
+    ipaddress.ip_address(ip)
+    secret_value = str(secret).strip().lower()
+    if len(secret_value) != 64:
+        raise ValueError("device secret must be 64 hex characters")
+    try:
+        bytes.fromhex(secret_value)
+    except ValueError as exc:
+        raise ValueError("device secret must be 64 hex characters") from exc
+    path = secrets_file or os.environ.get("KID_PC_DEVICE_SECRETS_FILE", DEVICE_SECRETS_FILE)
+    secrets_map = load_device_secrets(path)
+    secrets_map[str(ip)] = secret_value
+    atomic_write_json(path, secrets_map)
+    return secrets_map
+
+
+def current_pairing_token():
+    env_value = os.environ.get("KID_PC_PAIRING_TOKEN")
+    if env_value:
+        return env_value.strip()
+    token_file = os.environ.get("KID_PC_PAIRING_TOKEN_FILE", PAIRING_TOKEN_FILE)
+    if os.path.exists(token_file):
+        try:
+            with open(token_file, "r", encoding="utf-8") as handle:
+                return handle.read().strip()
+        except OSError:
+            return ""
+    return ""
 
 
 def build_signed_command(body, secret_hex, now=None, nonce=None):
@@ -376,6 +422,31 @@ def action():
         response = f"{response}; policy change saved as pending sync"
 
     return jsonify({'success': success, 'response': response, 'pending': pending})
+
+
+@app.route('/api/pair', methods=['POST'])
+def pair_child():
+    data = request.get_json(silent=True) or {}
+    expected_token = current_pairing_token()
+    if not expected_token or data.get("token") != expected_token:
+        return jsonify({"success": False, "error": "invalid pairing token"}), 403
+
+    ip = str(data.get("ip") or request.remote_addr or "").strip()
+    secret = str(data.get("secret") or "").strip()
+    hostname = str(data.get("hostname") or f"PC at {ip}").strip()
+    try:
+        save_device_secret(ip, secret)
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+
+    discovered_pcs[ip] = {
+        "hostname": hostname or f"PC at {ip}",
+        "status": "online",
+        "locked": False,
+        "last_seen": datetime.now(),
+        "pending_sync": ip in PENDING_COMMANDS,
+    }
+    return jsonify({"success": True, "ip": ip, "hostname": hostname})
 
 # HTML Templates
 INDEX_TEMPLATE = '''

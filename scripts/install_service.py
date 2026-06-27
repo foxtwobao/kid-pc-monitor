@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def copy_agent_files() -> None:
     PROGRAM_DIR.mkdir(parents=True, exist_ok=True)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    for item in ["src", "requirements.txt"]:
+    for item in ["src", "scripts", "requirements.txt"]:
         source = ROOT / item
         target = PROGRAM_DIR / item
         if source.is_dir():

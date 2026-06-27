@@ -1,6 +1,17 @@
 from scripts import install_service
 
 
+def test_copy_agent_files_includes_uninstaller(tmp_path, monkeypatch):
+    monkeypatch.setattr(install_service, "PROGRAM_DIR", tmp_path / "Program")
+    monkeypatch.setattr(install_service, "DATA_DIR", tmp_path / "Data")
+
+    install_service.copy_agent_files()
+
+    assert (tmp_path / "Program" / "src" / "windows_service.py").exists()
+    assert (tmp_path / "Program" / "scripts" / "uninstall_service.py").exists()
+    assert (tmp_path / "Program" / "requirements.txt").exists()
+
+
 def test_install_service_uses_current_python(monkeypatch):
     calls = []
     monkeypatch.setattr(install_service, "PROGRAM_DIR", install_service.Path(r"C:\Program Files\KidPCMonitor"))

@@ -28,9 +28,23 @@ DIY parental control system for parents who code. If you know what 'pip install'
 
 ## 🚀 Quick Start
 
+### One-line install
+
+On the parent/server machine:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/foxtwobao/kid-pc-monitor/main/scripts/install_parent.sh | bash
+```
+
+Then copy the child install command printed by that terminal and run it from an Administrator PowerShell on each child Windows PC.
+
+The child installer automatically pairs with the parent panel, so you do not need to copy `agent.secret` by hand.
+
+Full Chinese deployment guide: [docs/DEPLOYMENT.zh-CN.md](docs/DEPLOYMENT.zh-CN.md).
+
 ## ⚠️ Technical Skills Required
 
-This is NOT a one-click solution. You'll need to:
+The one-line installer handles the common path, but you'll still need to:
 - Install Python
 - Use a terminal / command prompt
 - Understand IP addresses
@@ -48,8 +62,6 @@ If these terms scare you, consider commercial alternatives like:
 - **Network:** Kid PCs must accept inbound TCP **9999** from the machine running the web panel (usually the same LAN; cross-subnet works if routed and allowed by firewalls). The web panel listens on TCP **5000** for your browser or phone.
 
 Auto-discovery scans the `/24` subnet containing the parent machine's primary IPv4 address (see `scan_for_servers` in `src/web_panel.py`). If discovery misses a PC, you can still use it once the agent is reachable at its IP.
-
-For the current hardened service deployment, see the Chinese deployment guide: [docs/DEPLOYMENT.zh-CN.md](docs/DEPLOYMENT.zh-CN.md).
 
 ### Installation
 
@@ -138,23 +150,10 @@ Use `./scripts/install_web_panel_linux.sh cat-unit` to preview the unit. Overrid
 
 Run everything on the kid's PC and access the admin panel from your phone. This is convenient if you don't have a separate PC always running, but Option A is safer because the web panel is not on the child's machine.
 
-1. **On the kid's PC (as administrator):**
-```powershell
-git clone https://github.com/foxtwobao/kid-pc-monitor.git
-cd kid-pc-monitor
-python -m pip install -r requirements.txt
+1. Start the parent panel with the one-line installer.
+2. On the same PC, open Administrator PowerShell and run the child install command printed by the parent panel terminal.
 
-# Install the child-side service. Use the PC's own LAN IP as the parent IP
-# only if you really want the web panel on the same machine.
-python scripts\install_service.py --parent-ip <KIDS_PC_IP> --uninstall-token "<keep-this-token-private>"
-
-# Read the local secret, configure KID_PC_DEVICE_SECRETS, then start the panel.
-Get-Content C:\ProgramData\KidPCMonitor\agent.secret
-$env:KID_PC_DEVICE_SECRETS='{"<KIDS_PC_IP>":"<hex-secret>"}'
-python -m src.web_panel
-```
-
-2. **On your phone:**
+Then on your phone:
    - Open browser and go to `http://KIDS-PC-IP:5000`
    - Bookmark it for easy access
 

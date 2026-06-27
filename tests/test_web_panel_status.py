@@ -1,13 +1,17 @@
 from src.web_panel import (
+    DEVICE_SECRETS,
     PENDING_COMMANDS,
     command_body_from_legacy,
+    configured_device_secrets,
     current_user_from_status,
     is_policy_command,
     load_pending_commands,
     record_pending_command,
     save_pending_commands,
+    save_device_secret,
     sync_pending_command,
     time_remaining_from_status,
+    app,
 )
 
 
@@ -87,3 +91,49 @@ def test_sync_pending_command_updates_disk_after_success(tmp_path):
 
     assert synced is True
     assert load_pending_commands(pending_file) == {}
+
+
+def test_pair_endpoint_persists_child_secret(tmp_path, monkeypatch):
+    secret_file = tmp_path / "device_secrets.json"
+    monkeypatch.setenv("KID_PC_PAIRING_TOKEN", "pair-me")
+    monkeypatch.setenv("KID_PC_DEVICE_SECRETS_FILE", str(secret_file))
+    DEVICE_SECRETS.clear()
+
+    response = app.test_client().post(
+        "/api/pair",
+        json={
+            "token": "pair-me",
+            "ip": "192.168.10.251",
+            "hostname": "kid-laptop",
+            "secret": "a" * 64,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["success"] is True
+    assert configured_device_secrets()["192.168.10.251"] == "a" * 64
+    assert '"192.168.10.251"' in secret_file.read_text(encoding="utf-8")
+
+
+def test_pair_endpoint_rejects_wrong_token(tmp_path, monkeypatch):
+    secret_file = tmp_path / "device_secrets.json"
+    monkeypatch.setenv("KID_PC_PAIRING_TOKEN", "pair-me")
+    monkeypatch.setenv("KID_PC_DEVICE_SECRETS_FILE", str(secret_file))
+    DEVICE_SECRETS.clear()
+
+    response = app.test_client().post(
+        "/api/pair",
+        json={"token": "wrong", "ip": "192.168.10.251", "secret": "b" * 64},
+    )
+
+    assert response.status_code == 403
+    assert not secret_file.exists()
+
+
+def test_save_device_secret_rejects_non_hex_secret(tmp_path):
+    try:
+        save_device_secret("192.168.10.251", "not-hex", secrets_file=tmp_path / "secrets.json")
+    except ValueError as exc:
+        assert "64 hex" in str(exc)
+    else:
+        raise AssertionError("expected invalid secret to be rejected")
