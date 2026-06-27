@@ -7,8 +7,7 @@ set -euo pipefail
 UNIT_NAME="kid-pc-monitor-web-panel.service"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-SRC_DIR="$(cd "${REPO_ROOT}/src" && pwd)"
-WEB_PANEL_PY="${SRC_DIR}/web_panel.py"
+WEB_PANEL_PY="${REPO_ROOT}/src/web_panel.py"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 UNIT_PATH="${UNIT_DIR}/${UNIT_NAME}"
 
@@ -25,9 +24,8 @@ Commands:
 Environment (optional):
   PYTHON      Full path to python interpreter (default: .venv, venv, or python3)
 
-The service runs with WorkingDirectory set to the repo's src/ directory so
-Flask templates are written next to web_panel.py, matching manual runs from
-that directory.
+The service runs with WorkingDirectory set to the repo root and starts the
+panel as a module, matching the src.* imports used by the current codebase.
 
 Optional — start at boot without an interactive login:
   sudo loginctl enable-linger "$USER"
@@ -85,9 +83,9 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=${SRC_DIR}
+WorkingDirectory=${REPO_ROOT}
 Environment=PYTHONUNBUFFERED=1
-ExecStart=${py} ${WEB_PANEL_PY}
+ExecStart=${py} -m src.web_panel
 Restart=on-failure
 RestartSec=10
 

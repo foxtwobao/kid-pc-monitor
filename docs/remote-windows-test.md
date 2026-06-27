@@ -80,8 +80,7 @@ Read `C:\ProgramData\KidPCMonitor\agent.secret` on the child PC as administrator
 
 ```bash
 export KID_PC_DEVICE_SECRETS='{"192.168.10.251":"<hex-secret>"}'
-cd src
-python web_panel.py
+python -m src.web_panel
 ```
 
 ## Offline Enforcement Test

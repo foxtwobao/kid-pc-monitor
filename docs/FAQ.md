@@ -14,8 +14,8 @@ No! This tool:
 If they have administrator access, yes. This tool is based on trust and communication, not enforcement. For younger kids who don't have admin rights, it's quite effective.
 
 ### Does it work on Mac/Linux?
-- **Kid PC (monitoring agent):** Windows only today (`pc_control.py` uses Windows-specific lock and session APIs).
-- **Parent web panel:** Runs on **Windows, Linux, or macOS**. Install Python, `pip install -r requirements.txt` (on non-Windows, `pywin32` is skipped automatically), then run `web_panel.py` from `src/`. The panel talks to each kid PC over TCP port **9999** on your network.
+- **Kid PC (monitoring agent):** Windows only today. The hardened deployment uses `KidPCMonitorService`.
+- **Parent web panel:** Runs on **Windows, Linux, or macOS**. Install Python, `pip install -r requirements.txt` (on non-Windows, `pywin32` is skipped automatically), then run `python -m src.web_panel` from the repo root. The panel talks to each kid PC over TCP port **9999** on your network.
 
 ## Setup Issues
 
@@ -27,7 +27,7 @@ If they have administrator access, yes. This tool is based on trust and communic
 ### "Can't connect from my phone"
 1. Check both devices are on same WiFi (or that routing exists between subnets if you use VLANs)
 2. **Firewall:** On Windows (kid PC or a Windows parent), allow Python / ports **5000** (web panel) and **9999** (agent). On a **Linux** machine running the web panel, allow inbound **5000/tcp** (e.g. `sudo ufw allow 5000/tcp` on Ubuntu)
-3. Use the IP address shown when starting `web_panel.py`, not `localhost`, from the other device
+3. Use the IP address shown when starting `python -m src.web_panel`, not `localhost`, from the other device
 
 ### "PC shows as Unknown"
 This is normal. You can:
