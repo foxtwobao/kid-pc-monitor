@@ -328,6 +328,7 @@ def test_service_core_sends_lock_once_while_limit_remains_active(tmp_path):
 
 def test_service_core_clears_stale_lock_reason_when_policy_no_longer_locks(tmp_path):
     sent_messages = []
+    cleared = []
     policy_path = tmp_path / "policy.json"
     state_path = tmp_path / "state.json"
     policy_path.write_text(__import__("json").dumps(make_policy(limit=60).to_dict()), encoding="utf-8")
@@ -337,6 +338,7 @@ def test_service_core_clears_stale_lock_reason_when_policy_no_longer_locks(tmp_p
         username_provider=lambda: "kid",
         now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
         helper_sender=sent_messages.append,
+        helper_clearer=lambda: cleared.append(True),
     )
     core.state = make_state(seconds=10)
     core.state = type(core.state)(
@@ -352,3 +354,4 @@ def test_service_core_clears_stale_lock_reason_when_policy_no_longer_locks(tmp_p
     core.tick()
 
     assert core.state.active_lock_reason is None
+    assert cleared == [True]

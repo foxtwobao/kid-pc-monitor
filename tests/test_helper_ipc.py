@@ -1,6 +1,6 @@
 import pytest
 
-from src.helper_ipc import append_command, decode_message, encode_message, read_commands
+from src.helper_ipc import append_command, clear_command_file, decode_message, encode_message, read_commands
 
 
 def test_helper_ipc_round_trips_message():
@@ -35,3 +35,12 @@ def test_helper_ipc_can_resume_from_previous_offset(tmp_path):
     assert list(read_commands(command_file, start_offset=offset)) == [
         {"type": "message", "text": "new"}
     ]
+
+
+def test_helper_ipc_can_clear_command_file(tmp_path):
+    command_file = tmp_path / "helper_commands.jsonl"
+    append_command(command_file, {"type": "lock", "reason": "daily_limit"})
+
+    clear_command_file(command_file)
+
+    assert command_file.read_text(encoding="utf-8") == ""

@@ -20,6 +20,7 @@ class KidServiceCore:
         username_provider: Callable[[], str],
         now_provider: Callable[[], datetime],
         helper_sender: Callable[[dict], None],
+        helper_clearer: Callable[[], None] | None = None,
         shutdown_sender: Callable[[int], None] | None = None,
         event_logger: Callable[[str, dict], None] | None = None,
     ):
@@ -28,6 +29,7 @@ class KidServiceCore:
         self.username_provider = username_provider
         self.now_provider = now_provider
         self.helper_sender = helper_sender
+        self.helper_clearer = helper_clearer or (lambda: None)
         self.shutdown_sender = shutdown_sender or self.default_shutdown_sender
         self.event_logger = event_logger or (lambda _event_type, _data: None)
         self.state = self.state_store.load()
@@ -96,6 +98,7 @@ class KidServiceCore:
             self.sent_warnings.add(decision.warning_minutes)
             self.helper_sender({"type": "warning", "minutes": decision.warning_minutes})
         elif self.state.active_lock_reason is not None:
+            self.helper_clearer()
             self.state = AgentState(
                 current_date=self.state.current_date,
                 usage_seconds_by_user=self.state.usage_seconds_by_user,

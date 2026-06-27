@@ -11,7 +11,7 @@ if __package__ in (None, ""):
 from src.agent_auth import NonceStore
 from src.command_server import CommandDispatcher, build_server
 from src.event_log import append_event
-from src.helper_ipc import append_command
+from src.helper_ipc import append_command, clear_command_file
 from src.kid_service import KidServiceCore
 from src.windows_hardening import EVENT_LOG_PATH, HELPER_COMMAND_PATH, POLICY_PATH, SECRET_PATH, SERVICE_NAME, STATE_PATH
 from src.windows_sessions import current_interactive_username
@@ -28,6 +28,7 @@ def build_core() -> KidServiceCore:
         username_provider=current_interactive_username,
         now_provider=lambda: __import__("datetime").datetime.now().astimezone(),
         helper_sender=lambda message: append_command(HELPER_COMMAND_PATH, message),
+        helper_clearer=lambda: clear_command_file(HELPER_COMMAND_PATH),
         event_logger=lambda event_type, data: append_event(EVENT_LOG_PATH, event_type, data),
     )
 
