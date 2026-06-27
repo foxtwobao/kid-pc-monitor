@@ -9,10 +9,7 @@ from ctypes import wintypes
 WTS_CURRENT_SERVER_HANDLE = 0
 WTS_USER_NAME = 5
 WTS_DOMAIN_NAME = 7
-WTS_SESSION_INFO_EX = 25
 WTS_ACTIVE = 0
-WTS_SESSION_LOCKED = 0
-WTS_SESSION_UNLOCKED = 1
 
 
 class WTS_SESSION_INFO(ctypes.Structure):
@@ -23,12 +20,12 @@ class WTS_SESSION_INFO(ctypes.Structure):
     ]
 
 
-class WTSINFOEX_LOCK_STATE(ctypes.Structure):
+class WTS_PROCESS_INFO(ctypes.Structure):
     _fields_ = [
-        ("level", wintypes.DWORD),
         ("session_id", wintypes.DWORD),
-        ("session_state", wintypes.DWORD),
-        ("session_flags", wintypes.LONG),
+        ("process_id", wintypes.DWORD),
+        ("process_name", wintypes.LPWSTR),
+        ("user_sid", ctypes.c_void_p),
     ]
 
 
@@ -98,25 +95,46 @@ def enumerate_sessions() -> list[dict]:
         ctypes.windll.wtsapi32.WTSFreeMemory(sessions_ptr)
 
 
+def enumerate_processes() -> list[dict]:
+    if sys.platform != "win32":
+        return []
+    processes_ptr = ctypes.POINTER(WTS_PROCESS_INFO)()
+    count = wintypes.DWORD()
+    ok = ctypes.windll.wtsapi32.WTSEnumerateProcessesW(
+        WTS_CURRENT_SERVER_HANDLE,
+        0,
+        1,
+        ctypes.byref(processes_ptr),
+        ctypes.byref(count),
+    )
+    if not ok:
+        return []
+    try:
+        return [
+            {
+                "session_id": processes_ptr[index].session_id,
+                "process_id": processes_ptr[index].process_id,
+                "process_name": processes_ptr[index].process_name or "",
+            }
+            for index in range(count.value)
+        ]
+    finally:
+        ctypes.windll.wtsapi32.WTSFreeMemory(processes_ptr)
+
+
+def session_has_process(session_id: int, process_name: str, process_enumerator=enumerate_processes) -> bool:
+    expected = process_name.lower()
+    return any(
+        int(process.get("session_id", -1)) == int(session_id)
+        and str(process.get("process_name", "")).lower() == expected
+        for process in process_enumerator()
+    )
+
+
 def is_session_unlocked(session_id: int) -> bool:
     if sys.platform != "win32":
         return True
-    buffer = ctypes.c_void_p()
-    bytes_returned = ctypes.c_ulong()
-    ok = ctypes.windll.wtsapi32.WTSQuerySessionInformationW(
-        WTS_CURRENT_SERVER_HANDLE,
-        session_id,
-        WTS_SESSION_INFO_EX,
-        ctypes.byref(buffer),
-        ctypes.byref(bytes_returned),
-    )
-    if not ok:
-        return False
-    try:
-        info = ctypes.cast(buffer, ctypes.POINTER(WTSINFOEX_LOCK_STATE)).contents
-        return info.session_flags == WTS_SESSION_UNLOCKED
-    finally:
-        ctypes.windll.wtsapi32.WTSFreeMemory(buffer)
+    return not session_has_process(session_id, "LogonUI.exe")
 
 
 def select_interactive_username(sessions: list[dict], query_username, query_unlocked=lambda _session_id: True) -> str:

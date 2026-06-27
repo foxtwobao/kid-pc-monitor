@@ -10,6 +10,7 @@ from src.windows_sessions import (
     current_interactive_username,
     disconnect_active_sessions,
     disconnect_active_sessions_for_users,
+    session_has_process,
     select_interactive_username,
 )
 
@@ -54,6 +55,16 @@ def test_select_interactive_username_ignores_locked_active_sessions():
         lambda session_id: f"user-{session_id}",
         lambda session_id: session_id == 2,
     ) == "user-2"
+
+
+def test_session_has_process_matches_name_and_session():
+    processes = [
+        {"session_id": 1, "process_name": "LogonUI.exe"},
+        {"session_id": 2, "process_name": "explorer.exe"},
+    ]
+
+    assert session_has_process(1, "LogonUI.exe", lambda: processes) is True
+    assert session_has_process(2, "LogonUI.exe", lambda: processes) is False
 
 
 def test_active_remote_session_ids_selects_active_rdp_sessions_only():
