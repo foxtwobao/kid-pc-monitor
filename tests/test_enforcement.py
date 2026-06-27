@@ -159,6 +159,23 @@ def test_service_core_can_send_parent_message_to_helper(tmp_path):
     assert sent_messages == [{"type": "message", "text": "Dinner time"}]
 
 
+def test_service_core_can_request_shutdown(tmp_path):
+    shutdown_calls = []
+    core = KidServiceCore(
+        policy_path=tmp_path / "policy.json",
+        state_path=tmp_path / "state.json",
+        username_provider=lambda: "kid",
+        now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
+        helper_sender=lambda message: None,
+        shutdown_sender=shutdown_calls.append,
+    )
+
+    response = core.handle_shutdown({"seconds": 30})
+
+    assert response == {"shutdown_requested": True, "seconds": 30}
+    assert shutdown_calls == [30]
+
+
 def test_service_core_accounts_usage_between_ticks(tmp_path):
     sent_messages = []
     times = iter(

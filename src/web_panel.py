@@ -98,6 +98,22 @@ def query_status(ip, port=9999):
         return None
     return payload.get("body", {})
 
+
+def time_remaining_from_status(status):
+    policy = status.get("policy")
+    state = status.get("state", {})
+    if not policy or not policy.get("daily_limit_minutes"):
+        return "No limits set"
+    usage = state.get("usage_seconds_by_user", {})
+    current_user = status.get("current_user")
+    if current_user and current_user in usage:
+        used_seconds = usage[current_user]
+    else:
+        used_seconds = max(usage.values(), default=0)
+    remaining_seconds = policy["daily_limit_minutes"] * 60 - used_seconds
+    remaining_minutes = max(0, int(remaining_seconds / 60))
+    return f"{remaining_minutes} minutes"
+
 def get_local_ip():
     """Get the local IP address of this machine"""
     try:
@@ -137,17 +153,8 @@ def get_lock_times(ip, port=9999):
 
 def get_time_remaining(ip, port=9999):
     """Get time remaining until next lock"""
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(2)
-        s.connect((ip, port))
-        s.send(b"GET_TIME_REMAINING")
-        remaining = s.recv(1024).decode().strip()
-        s.close()
-        return remaining
-    except Exception as e:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Error getting time remaining from {ip}: {e}")
-        return None
+    status = query_status(ip, port=port)
+    return time_remaining_from_status(status) if status else None
 
 def scan_for_servers(port=9999):
     """Scan the local network for PCs running the control server"""

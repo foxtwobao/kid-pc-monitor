@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import time
 from typing import Callable
@@ -19,15 +20,21 @@ class KidServiceCore:
         username_provider: Callable[[], str],
         now_provider: Callable[[], datetime],
         helper_sender: Callable[[dict], None],
+        shutdown_sender: Callable[[int], None] | None = None,
     ):
         self.policy_path = Path(policy_path)
         self.state_store = StateStore(state_path)
         self.username_provider = username_provider
         self.now_provider = now_provider
         self.helper_sender = helper_sender
+        self.shutdown_sender = shutdown_sender or self.default_shutdown_sender
         self.state = self.state_store.load()
         self.sent_warnings: set[int] = set()
         self.last_tick_at: datetime | None = None
+
+    @staticmethod
+    def default_shutdown_sender(seconds: int) -> None:
+        os.system(f'shutdown /s /t {seconds} /c "Computer will shutdown in {seconds} seconds"')
 
     def load_policy(self) -> Policy | None:
         if not self.policy_path.exists():
@@ -185,6 +192,11 @@ class KidServiceCore:
         self.helper_sender({"type": "message", "text": str(body.get("message", ""))})
         return {"message_sent": True}
 
+    def handle_shutdown(self, body: dict) -> dict:
+        seconds = int(body.get("seconds", 60))
+        self.shutdown_sender(seconds)
+        return {"shutdown_requested": True, "seconds": seconds}
+
     def handlers(self) -> dict[str, Callable[[dict], dict]]:
         return {
             "status": self.handle_status,
@@ -196,6 +208,7 @@ class KidServiceCore:
             "clear_all": self.handle_clear_all,
             "lock": self.handle_lock,
             "message": self.handle_message,
+            "shutdown": self.handle_shutdown,
         }
 
     def run_forever(self, interval_seconds: int = 1) -> None:
