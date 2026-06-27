@@ -119,6 +119,10 @@ def current_pairing_token():
     return ""
 
 
+def panel_port():
+    return int(os.environ.get("KID_PC_PANEL_PORT", "5000"))
+
+
 def build_signed_command(body, secret_hex, now=None, nonce=None):
     return sign_message(body, bytes.fromhex(secret_hex), now=now, nonce=nonce)
 
@@ -999,13 +1003,15 @@ CONTROL_TEMPLATE = '''
 '''
 
 if __name__ == '__main__':
+    port = panel_port()
+
     # Do initial scan
     print("Performing initial scan...")
     scan_for_servers()
     
     # Start the web server
     print(f"\nWeb Control Panel starting...")
-    print(f"Access from your phone at: http://{get_local_ip()}:5000")
-    print(f"Or from this PC at: http://localhost:5000")
+    print(f"Access from your phone at: http://{get_local_ip()}:{port}")
+    print(f"Or from this PC at: http://localhost:{port}")
     
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=False)

@@ -16,6 +16,56 @@ need() {
 need git
 need python3
 
+list_parent_panel_pids() {
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -tiTCP:"$PANEL_PORT" -sTCP:LISTEN 2>/dev/null || true
+        return
+    fi
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltnp "sport = :$PANEL_PORT" 2>/dev/null |
+            sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' || true
+        return
+    fi
+    if command -v fuser >/dev/null 2>&1; then
+        fuser -n tcp "$PANEL_PORT" 2>/dev/null | tr ' ' '\n' || true
+        return
+    fi
+}
+
+stop_existing_parent_panel() {
+    local pids pid cmd blocked=0 stopped=0
+    pids="$(list_parent_panel_pids | sed '/^$/d' | sort -u)"
+    [[ -z "$pids" ]] && return
+
+    for pid in $pids; do
+        [[ "$pid" == "$$" ]] && continue
+        cmd="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+        if [[ "$cmd" == *"src.web_panel"* ]]; then
+            echo "Stopping existing Kid PC Monitor parent panel on port ${PANEL_PORT} (pid ${pid})..."
+            kill "$pid" 2>/dev/null || true
+            stopped=1
+        else
+            echo "Port ${PANEL_PORT} is already in use by pid ${pid}: ${cmd}" >&2
+            blocked=1
+        fi
+    done
+
+    if [[ "$blocked" -eq 1 ]]; then
+        echo "Stop the process above, or rerun with KID_PC_PANEL_PORT=<another-port>." >&2
+        exit 1
+    fi
+
+    if [[ "$stopped" -eq 1 ]]; then
+        for _ in {1..30}; do
+            pids="$(list_parent_panel_pids | sed '/^$/d' | sort -u)"
+            [[ -z "$pids" ]] && return
+            sleep 0.2
+        done
+        echo "Port ${PANEL_PORT} is still busy after stopping the old parent panel." >&2
+        exit 1
+    fi
+}
+
 mkdir -p "$(dirname "$INSTALL_DIR")"
 if [[ -d "$INSTALL_DIR/.git" ]]; then
     git -C "$INSTALL_DIR" pull --ff-only
@@ -56,6 +106,8 @@ PY
 
 CHILD_COMMAND="powershell -NoProfile -ExecutionPolicy Bypass -Command \"iex (irm '${RAW_BASE}/scripts/install_child.ps1'); Install-KidPCMonitorChild -ParentUrl 'http://${PARENT_IP}:${PANEL_PORT}' -PairingToken '${PAIRING_TOKEN}'\""
 
+stop_existing_parent_panel
+
 cat <<EOF
 
 Kid PC Monitor parent panel is ready.
@@ -72,4 +124,5 @@ EOF
 
 export KID_PC_PAIRING_TOKEN_FILE="$PAIRING_TOKEN_FILE"
 export KID_PC_DEVICE_SECRETS_FILE="$INSTALL_DIR/device_secrets.json"
+export KID_PC_PANEL_PORT="$PANEL_PORT"
 exec "$PYTHON" -m src.web_panel

@@ -6,6 +6,7 @@ from src.web_panel import (
     current_user_from_status,
     is_policy_command,
     load_pending_commands,
+    panel_port,
     record_pending_command,
     save_pending_commands,
     save_device_secret,
@@ -28,6 +29,14 @@ def test_time_remaining_from_status_uses_daily_limit_and_usage():
 
 def test_time_remaining_from_status_handles_missing_limit():
     assert time_remaining_from_status({"policy": None, "state": {}}) == "No limits set"
+
+
+def test_panel_port_defaults_and_reads_environment(monkeypatch):
+    monkeypatch.delenv("KID_PC_PANEL_PORT", raising=False)
+    assert panel_port() == 5000
+
+    monkeypatch.setenv("KID_PC_PANEL_PORT", "5055")
+    assert panel_port() == 5055
 
 
 def test_current_user_from_status_reads_signed_status_body():

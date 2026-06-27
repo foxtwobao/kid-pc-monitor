@@ -8,6 +8,11 @@ def test_parent_bootstrap_prints_child_one_liner():
     assert "Install-KidPCMonitorChild" in script
     assert "PAIRING_TOKEN" in script
     assert "-m src.web_panel" in script
+    assert 'export KID_PC_PANEL_PORT="$PANEL_PORT"' in script
+    assert "stop_existing_parent_panel" in script
+    assert "lsof -tiTCP" in script
+    assert "Stopping existing Kid PC Monitor parent panel" in script
+    assert "Port ${PANEL_PORT} is already in use" in script
 
 
 def test_child_bootstrap_installs_service_and_pairs_with_parent():
