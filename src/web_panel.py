@@ -14,6 +14,7 @@ app = Flask(__name__)
 # Store discovered PCs
 discovered_pcs = {}
 last_scan_time = None
+PENDING_COMMANDS = {}
 
 # Custom PC names (optional) - Add your kids' PC names here
 CUSTOM_PC_NAMES = {
@@ -67,6 +68,38 @@ def command_body_from_legacy(command):
     if command == "CLEAR_ALL":
         return {"command": "clear_all"}
     return {"command": command.lower()}
+
+
+def is_policy_command(body):
+    return body.get("command") in {
+        "apply_policy",
+        "set_limit",
+        "add_lock_time",
+        "clear_usage_limit",
+        "clear_lock_times",
+        "clear_all",
+    }
+
+
+def record_pending_command(ip, body, last_error):
+    PENDING_COMMANDS[ip] = {
+        "body": body,
+        "last_error": last_error,
+        "created_at": datetime.now().isoformat(),
+    }
+
+
+def sync_pending_command(ip, sender=None):
+    pending = PENDING_COMMANDS.get(ip)
+    if not pending:
+        return False
+    sender = sender or send_signed_body
+    success, response = sender(ip, pending["body"])
+    if success:
+        PENDING_COMMANDS.pop(ip, None)
+        return True
+    pending["last_error"] = response
+    return False
 
 
 def send_signed_body(host, body, port=9999):
@@ -196,11 +229,13 @@ def scan_for_servers(port=9999):
                         except:
                             hostname = f"PC at {ip}"
                 
+                sync_pending_command(str(ip))
                 discovered_pcs[str(ip)] = {
                     'hostname': hostname,
                     'status': 'online',
                     'locked': False,  # Will update in separate check
-                    'last_seen': datetime.now()
+                    'last_seen': datetime.now(),
+                    'pending_sync': str(ip) in PENDING_COMMANDS,
                 }
         except:
             pass
@@ -220,7 +255,10 @@ def scan_for_servers(port=9999):
 def send_command(host, command, port=9999):
     """Send a command to the remote PC"""
     body = command_body_from_legacy(command)
-    return send_signed_body(host, body, port=port)
+    success, response = send_signed_body(host, body, port=port)
+    if not success and is_policy_command(body):
+        record_pending_command(host, body, response)
+    return success, response
 
 @app.route('/')
 def index():
@@ -234,6 +272,7 @@ def index():
         username = get_current_user(ip)
         if username:
             discovered_pcs[ip]['current_user'] = username
+        discovered_pcs[ip]['pending_sync'] = ip in PENDING_COMMANDS
 
     return render_template('index.html',
                          pcs=discovered_pcs,
@@ -249,6 +288,7 @@ def scan():
 def control(ip):
     """Control page for a specific PC"""
     pc_info = discovered_pcs.get(ip, {'hostname': 'Unknown', 'status': 'unknown'})
+    sync_pending_command(ip)
     # Check current lock status
     status = check_pc_status(ip)
     pc_info['locked'] = (status == "LOCKED")
@@ -267,6 +307,7 @@ def control(ip):
 
     time_remaining = get_time_remaining(ip)
     pc_info['time_remaining'] = time_remaining  # Update even if None
+    pc_info['pending_sync'] = ip in PENDING_COMMANDS
 
     return render_template('control.html', ip=ip, pc_info=pc_info)
 
@@ -304,7 +345,11 @@ def action():
     else:
         success, response = False, "Unknown action"
 
-    return jsonify({'success': success, 'response': response})
+    pending = ip in PENDING_COMMANDS
+    if pending and not success:
+        response = f"{response}; policy change saved as pending sync"
+
+    return jsonify({'success': success, 'response': response, 'pending': pending})
 
 # HTML Templates
 INDEX_TEMPLATE = '''
@@ -411,6 +456,9 @@ INDEX_TEMPLATE = '''
                 <div class="pc-ip">{{ ip }}</div>
                 {% if info.get('current_user') %}
                 <div class="pc-ip">👤 User: {{ info.current_user }}</div>
+                {% endif %}
+                {% if info.get('pending_sync') %}
+                <div class="pc-ip" style="color: #ff9800;">⏳ Pending policy sync</div>
                 {% endif %}
                 {% if info.locked %}
                 <span class="status locked">🔒 LOCKED</span>
@@ -565,6 +613,9 @@ CONTROL_TEMPLATE = '''
         <p style="text-align: center; color: #666;">{{ ip }}</p>
         {% if pc_info.get('current_user') %}
         <p style="text-align: center; color: #666;">👤 User: <strong>{{ pc_info.current_user }}</strong></p>
+        {% endif %}
+        {% if pc_info.get('pending_sync') %}
+        <p style="text-align: center; color: #ff9800;">⏳ Pending policy sync. The child PC has not acknowledged the latest change yet.</p>
         {% endif %}
 
         <!-- Display Current Settings (Always Visible) -->
