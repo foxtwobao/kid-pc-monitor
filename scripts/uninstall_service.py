@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -12,7 +13,8 @@ DATA_DIR = Path(r"C:\ProgramData\KidPCMonitor")
 TOKEN_HASH_FILE = DATA_DIR / "uninstall.sha256"
 
 
-def token_matches(token: str, token_file: Path = TOKEN_HASH_FILE) -> bool:
+def token_matches(token: str, token_file: Path | None = None) -> bool:
+    token_file = token_file or TOKEN_HASH_FILE
     if not token_file.exists():
         return False
     expected = token_file.read_text(encoding="utf-8").strip()
@@ -28,8 +30,8 @@ def main() -> int:
     if not token_matches(args.token):
         raise SystemExit("Invalid uninstall token")
     service_script = PROGRAM_DIR / "src" / "windows_service.py"
-    subprocess.run(["python", str(service_script), "stop"], check=False)
-    subprocess.run(["python", str(service_script), "remove"], check=True)
+    subprocess.run([sys.executable, str(service_script), "stop"], check=False)
+    subprocess.run([sys.executable, str(service_script), "remove"], check=True)
     subprocess.run(
         [
             "powershell.exe",
