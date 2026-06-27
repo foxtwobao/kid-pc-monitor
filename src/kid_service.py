@@ -135,17 +135,7 @@ class KidServiceCore:
 
     def handle_apply_policy(self, body: dict) -> dict:
         policy = Policy.from_dict(body["policy"])
-        self.save_policy(policy)
-        self.state = AgentState(
-            current_date=self.state.current_date,
-            usage_seconds_by_user=self.state.usage_seconds_by_user,
-            active_lock_reason=self.state.active_lock_reason,
-            last_policy_version=policy.policy_version,
-            unsent_event_cursor=self.state.unsent_event_cursor,
-            helper_last_seen_at=self.state.helper_last_seen_at,
-        )
-        self.state_store.save(self.state)
-        return {"accepted_policy_version": policy.policy_version}
+        return self.accept_policy(policy)
 
     def accept_policy(self, policy: Policy) -> dict:
         self.save_policy(policy)

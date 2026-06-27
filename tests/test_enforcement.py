@@ -146,6 +146,24 @@ def test_service_core_can_apply_limit_command_without_network_dependency(tmp_pat
     assert events == [("policy.accepted", {"version": 1})]
 
 
+def test_service_core_logs_apply_policy_command(tmp_path):
+    events = []
+    policy = make_policy(limit=20)
+    core = KidServiceCore(
+        policy_path=tmp_path / "policy.json",
+        state_path=tmp_path / "state.json",
+        username_provider=lambda: "kid",
+        now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
+        helper_sender=lambda message: None,
+        event_logger=lambda event_type, data: events.append((event_type, data)),
+    )
+
+    response = core.handle_apply_policy({"policy": policy.to_dict()})
+
+    assert response == {"accepted_policy_version": 1}
+    assert events == [("policy.accepted", {"version": 1})]
+
+
 def test_service_core_can_send_parent_message_to_helper(tmp_path):
     sent_messages = []
     events = []
