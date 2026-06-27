@@ -1,4 +1,4 @@
-from src.web_panel import time_remaining_from_status
+from src.web_panel import current_user_from_status, time_remaining_from_status
 
 
 def test_time_remaining_from_status_uses_daily_limit_and_usage():
@@ -13,3 +13,7 @@ def test_time_remaining_from_status_uses_daily_limit_and_usage():
 
 def test_time_remaining_from_status_handles_missing_limit():
     assert time_remaining_from_status({"policy": None, "state": {}}) == "No limits set"
+
+
+def test_current_user_from_status_reads_signed_status_body():
+    assert current_user_from_status({"current_user": "DESKTOP\\kid"}) == "DESKTOP\\kid"

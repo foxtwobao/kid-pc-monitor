@@ -18,6 +18,16 @@ def test_service_loop_continues_until_stop_event_is_set():
     assert windows_service.should_continue(FakeEvent(True)) is False
 
 
+def test_service_loop_sleeps_when_no_stop_event(monkeypatch):
+    import src.windows_service as windows_service
+
+    sleeps = []
+    monkeypatch.setattr(windows_service.time, "sleep", sleeps.append)
+
+    assert windows_service.should_continue(None, interval_seconds=2) is True
+    assert sleeps == [2]
+
+
 def test_build_core_uses_interactive_username_provider(monkeypatch, tmp_path):
     import src.windows_service as windows_service
 

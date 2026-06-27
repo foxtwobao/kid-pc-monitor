@@ -114,6 +114,10 @@ def time_remaining_from_status(status):
     remaining_minutes = max(0, int(remaining_seconds / 60))
     return f"{remaining_minutes} minutes"
 
+
+def current_user_from_status(status):
+    return status.get("current_user")
+
 def get_local_ip():
     """Get the local IP address of this machine"""
     try:
@@ -135,7 +139,8 @@ def check_pc_status(ip, port=9999):
 
 def get_current_user(ip, port=9999):
     """Get the current username logged in on the kid PC (as reported by the agent)."""
-    return None
+    status = query_status(ip, port=port)
+    return current_user_from_status(status) if status else None
 
 def get_usage_limit(ip, port=9999):
     """Get the current usage limit in minutes"""

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import threading
+import time
 from pathlib import Path
 
 if __package__ in (None, ""):
@@ -29,10 +30,11 @@ def build_core() -> KidServiceCore:
     )
 
 
-def should_continue(stop_event) -> bool:
+def should_continue(stop_event, interval_seconds: int = 1) -> bool:
     if stop_event is None:
+        time.sleep(interval_seconds)
         return True
-    return not stop_event.wait(1)
+    return not stop_event.wait(interval_seconds)
 
 
 def run_agent(stop_event=None) -> None:

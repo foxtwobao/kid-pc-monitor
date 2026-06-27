@@ -176,6 +176,20 @@ def test_service_core_can_request_shutdown(tmp_path):
     assert shutdown_calls == [30]
 
 
+def test_service_core_status_reports_current_user(tmp_path):
+    core = KidServiceCore(
+        policy_path=tmp_path / "policy.json",
+        state_path=tmp_path / "state.json",
+        username_provider=lambda: "DESKTOP\\kid",
+        now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
+        helper_sender=lambda message: None,
+    )
+
+    status = core.handle_status({})
+
+    assert status["current_user"] == "DESKTOP\\kid"
+
+
 def test_service_core_accounts_usage_between_ticks(tmp_path):
     sent_messages = []
     times = iter(

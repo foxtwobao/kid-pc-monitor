@@ -66,14 +66,25 @@ class StateStore:
             return AgentState.from_dict(json.load(handle)).for_today()
 
     def save(self, state: AgentState) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(self.path, state.to_dict())
+
+
+def atomic_write_json(path: str | Path, data: dict) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_name = None
+    try:
         with tempfile.NamedTemporaryFile(
             "w",
             encoding="utf-8",
-            dir=str(self.path.parent),
+            dir=str(target.parent),
             delete=False,
         ) as handle:
-            json.dump(state.to_dict(), handle, indent=2, sort_keys=True)
+            json.dump(data, handle, indent=2, sort_keys=True)
             handle.write("\n")
             temp_name = handle.name
-        Path(temp_name).replace(self.path)
+        Path(temp_name).replace(target)
+    except Exception:
+        if temp_name is not None:
+            Path(temp_name).unlink(missing_ok=True)
+        raise

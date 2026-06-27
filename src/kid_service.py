@@ -9,7 +9,7 @@ from typing import Callable
 
 from src.enforcement import evaluate_policy
 from src.policy import BedtimeWindow, Policy
-from src.state_store import AgentState, StateStore
+from src.state_store import AgentState, StateStore, atomic_write_json
 
 
 class KidServiceCore:
@@ -43,8 +43,7 @@ class KidServiceCore:
 
     def save_policy(self, policy: Policy) -> None:
         policy.validate()
-        self.policy_path.parent.mkdir(parents=True, exist_ok=True)
-        self.policy_path.write_text(json.dumps(policy.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        atomic_write_json(self.policy_path, policy.to_dict())
 
     def default_policy(self) -> Policy:
         return Policy(
@@ -126,6 +125,7 @@ class KidServiceCore:
             "policy_version": policy.policy_version if policy else 0,
             "policy": policy.to_dict() if policy else None,
             "state": self.state.to_dict(),
+            "current_user": self.username_provider(),
         }
 
     def handle_apply_policy(self, body: dict) -> dict:

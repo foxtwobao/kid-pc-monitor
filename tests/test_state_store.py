@@ -1,6 +1,10 @@
 from datetime import date
+import json
+from pathlib import Path
 
-from src.state_store import AgentState, StateStore
+import pytest
+
+from src.state_store import AgentState, StateStore, atomic_write_json
 
 
 def test_state_store_round_trips_json(tmp_path):
@@ -43,3 +47,21 @@ def test_state_rolls_usage_on_new_day():
     assert rolled.usage_seconds_by_user == {}
     assert rolled.active_lock_reason is None
     assert rolled.last_policy_version == 2
+
+
+def test_atomic_write_json_preserves_existing_file_when_replace_fails(tmp_path, monkeypatch):
+    path = tmp_path / "policy.json"
+    path.write_text('{"version": 1}\n', encoding="utf-8")
+    original_replace = Path.replace
+
+    def failing_replace(self, target):
+        if target == path:
+            raise RuntimeError("replace failed")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", failing_replace)
+
+    with pytest.raises(RuntimeError, match="replace failed"):
+        atomic_write_json(path, {"version": 2})
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {"version": 1}
