@@ -145,3 +145,55 @@ def test_service_core_can_send_parent_message_to_helper(tmp_path):
 
     assert response == {"message_sent": True}
     assert sent_messages == [{"type": "message", "text": "Dinner time"}]
+
+
+def test_service_core_accounts_usage_between_ticks(tmp_path):
+    sent_messages = []
+    times = iter(
+        [
+            datetime(2026, 6, 27, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 6, 27, 12, 0, 10, tzinfo=timezone.utc),
+        ]
+    )
+    policy_path = tmp_path / "policy.json"
+    state_path = tmp_path / "state.json"
+    policy_path.write_text(__import__("json").dumps(make_policy(limit=60).to_dict()), encoding="utf-8")
+    core = KidServiceCore(
+        policy_path=policy_path,
+        state_path=state_path,
+        username_provider=lambda: "kid",
+        now_provider=lambda: next(times),
+        helper_sender=sent_messages.append,
+    )
+
+    core.tick()
+    core.tick()
+
+    assert core.state.usage_seconds_by_user["kid"] == 10
+    assert sent_messages == []
+
+
+def test_service_core_locks_after_locally_accounted_usage_reaches_limit(tmp_path):
+    sent_messages = []
+    times = iter(
+        [
+            datetime(2026, 6, 27, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 6, 27, 12, 1, 0, tzinfo=timezone.utc),
+        ]
+    )
+    policy_path = tmp_path / "policy.json"
+    state_path = tmp_path / "state.json"
+    policy_path.write_text(__import__("json").dumps(make_policy(limit=1).to_dict()), encoding="utf-8")
+    core = KidServiceCore(
+        policy_path=policy_path,
+        state_path=state_path,
+        username_provider=lambda: "kid",
+        now_provider=lambda: next(times),
+        helper_sender=sent_messages.append,
+    )
+
+    core.tick()
+    core.tick()
+
+    assert core.state.usage_seconds_by_user["kid"] == 60
+    assert sent_messages[-1] == {"type": "lock", "reason": "daily_limit"}

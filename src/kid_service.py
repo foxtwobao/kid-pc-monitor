@@ -27,6 +27,7 @@ class KidServiceCore:
         self.helper_sender = helper_sender
         self.state = self.state_store.load()
         self.sent_warnings: set[int] = set()
+        self.last_tick_at: datetime | None = None
 
     def load_policy(self) -> Policy | None:
         if not self.policy_path.exists():
@@ -65,8 +66,10 @@ class KidServiceCore:
         if policy is None:
             return
         username = self.username_provider()
+        now = self.now_provider()
         self.state = self.state.for_today()
-        decision = evaluate_policy(policy, self.state, username, self.now_provider())
+        self.account_usage(username, now)
+        decision = evaluate_policy(policy, self.state, username, now)
         if decision.should_lock:
             self.helper_sender({"type": "lock", "reason": decision.reason})
             self.state = AgentState(
@@ -81,6 +84,25 @@ class KidServiceCore:
             self.sent_warnings.add(decision.warning_minutes)
             self.helper_sender({"type": "warning", "minutes": decision.warning_minutes})
         self.state_store.save(self.state)
+
+    def account_usage(self, username: str, now: datetime) -> None:
+        if self.last_tick_at is None:
+            self.last_tick_at = now
+            return
+        elapsed_seconds = int((now - self.last_tick_at).total_seconds())
+        self.last_tick_at = now
+        if elapsed_seconds <= 0:
+            return
+        usage = dict(self.state.usage_seconds_by_user)
+        usage[username] = usage.get(username, 0) + elapsed_seconds
+        self.state = AgentState(
+            current_date=self.state.current_date,
+            usage_seconds_by_user=usage,
+            active_lock_reason=self.state.active_lock_reason,
+            last_policy_version=self.state.last_policy_version,
+            unsent_event_cursor=self.state.unsent_event_cursor,
+            helper_last_seen_at=self.state.helper_last_seen_at,
+        )
 
     def handle_status(self, _body: dict) -> dict:
         policy = self.load_policy()

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import getpass
 import sys
 import threading
-import time
 from pathlib import Path
 
 from src.agent_auth import NonceStore
@@ -11,6 +9,7 @@ from src.command_server import CommandDispatcher, build_server
 from src.helper_ipc import append_command
 from src.kid_service import KidServiceCore
 from src.windows_hardening import HELPER_COMMAND_PATH, POLICY_PATH, SECRET_PATH, SERVICE_NAME, STATE_PATH
+from src.windows_sessions import current_interactive_username
 
 
 def load_secret() -> bytes:
@@ -21,7 +20,7 @@ def build_core() -> KidServiceCore:
     return KidServiceCore(
         policy_path=POLICY_PATH,
         state_path=STATE_PATH,
-        username_provider=getpass.getuser,
+        username_provider=current_interactive_username,
         now_provider=lambda: __import__("datetime").datetime.now().astimezone(),
         helper_sender=lambda message: append_command(HELPER_COMMAND_PATH, message),
     )
