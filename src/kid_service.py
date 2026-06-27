@@ -74,6 +74,8 @@ class KidServiceCore:
         if policy is None:
             return
         username = self.username_provider()
+        if not username:
+            return
         now = self.now_provider()
         self.state = self.state.for_today()
         self.account_usage(username, now)

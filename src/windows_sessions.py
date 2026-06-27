@@ -41,4 +41,4 @@ def current_interactive_username() -> str:
         return f"{domain}\\{username}"
     if username:
         return username
-    return os.environ.get("USERNAME") or getpass.getuser()
+    return ""

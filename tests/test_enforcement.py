@@ -225,6 +225,31 @@ def test_service_core_accounts_usage_between_ticks(tmp_path):
     assert sent_messages == []
 
 
+def test_service_core_does_not_account_usage_without_interactive_user(tmp_path):
+    times = iter(
+        [
+            datetime(2026, 6, 27, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 6, 27, 12, 0, 10, tzinfo=timezone.utc),
+        ]
+    )
+    policy_path = tmp_path / "policy.json"
+    state_path = tmp_path / "state.json"
+    policy_path.write_text(__import__("json").dumps(make_policy(limit=1).to_dict()), encoding="utf-8")
+    core = KidServiceCore(
+        policy_path=policy_path,
+        state_path=state_path,
+        username_provider=lambda: "",
+        now_provider=lambda: next(times),
+        helper_sender=lambda message: None,
+    )
+
+    core.tick()
+    core.tick()
+
+    assert core.state.usage_seconds_by_user == {}
+    assert core.state.active_lock_reason is None
+
+
 def test_service_core_locks_after_locally_accounted_usage_reaches_limit(tmp_path):
     sent_messages = []
     times = iter(
