@@ -127,6 +127,7 @@ def test_service_core_requests_lock_when_policy_says_lock(tmp_path):
 
 def test_service_core_can_apply_limit_command_without_network_dependency(tmp_path):
     sent_messages = []
+    events = []
     policy_path = tmp_path / "policy.json"
     state_path = tmp_path / "state.json"
     core = KidServiceCore(
@@ -135,32 +136,38 @@ def test_service_core_can_apply_limit_command_without_network_dependency(tmp_pat
         username_provider=lambda: "kid",
         now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
         helper_sender=sent_messages.append,
+        event_logger=lambda event_type, data: events.append((event_type, data)),
     )
 
     response = core.handle_set_limit({"minutes": 30})
 
     assert response == {"accepted_policy_version": 1, "daily_limit_minutes": 30}
     assert core.load_policy().daily_limit_minutes == 30
+    assert events == [("policy.accepted", {"version": 1})]
 
 
 def test_service_core_can_send_parent_message_to_helper(tmp_path):
     sent_messages = []
+    events = []
     core = KidServiceCore(
         policy_path=tmp_path / "policy.json",
         state_path=tmp_path / "state.json",
         username_provider=lambda: "kid",
         now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
         helper_sender=sent_messages.append,
+        event_logger=lambda event_type, data: events.append((event_type, data)),
     )
 
     response = core.handle_message({"message": "Dinner time"})
 
     assert response == {"message_sent": True}
     assert sent_messages == [{"type": "message", "text": "Dinner time"}]
+    assert events == [("message.sent", {"length": 11})]
 
 
 def test_service_core_can_request_shutdown(tmp_path):
     shutdown_calls = []
+    events = []
     core = KidServiceCore(
         policy_path=tmp_path / "policy.json",
         state_path=tmp_path / "state.json",
@@ -168,12 +175,14 @@ def test_service_core_can_request_shutdown(tmp_path):
         now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
         helper_sender=lambda message: None,
         shutdown_sender=shutdown_calls.append,
+        event_logger=lambda event_type, data: events.append((event_type, data)),
     )
 
     response = core.handle_shutdown({"seconds": 30})
 
     assert response == {"shutdown_requested": True, "seconds": 30}
     assert shutdown_calls == [30]
+    assert events == [("shutdown.requested", {"seconds": 30})]
 
 
 def test_service_core_status_reports_current_user(tmp_path):

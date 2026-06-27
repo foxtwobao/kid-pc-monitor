@@ -12,6 +12,7 @@ POLICY_PATH = DATA_DIR / "policy.json"
 STATE_PATH = DATA_DIR / "state.json"
 SECRET_PATH = DATA_DIR / "agent.secret"
 HELPER_COMMAND_PATH = DATA_DIR / "helper_commands.jsonl"
+EVENT_LOG_PATH = DATA_DIR / "events.jsonl"
 UNINSTALL_HASH_PATH = DATA_DIR / "uninstall.sha256"
 
 

@@ -21,6 +21,7 @@ class KidServiceCore:
         now_provider: Callable[[], datetime],
         helper_sender: Callable[[dict], None],
         shutdown_sender: Callable[[int], None] | None = None,
+        event_logger: Callable[[str, dict], None] | None = None,
     ):
         self.policy_path = Path(policy_path)
         self.state_store = StateStore(state_path)
@@ -28,6 +29,7 @@ class KidServiceCore:
         self.now_provider = now_provider
         self.helper_sender = helper_sender
         self.shutdown_sender = shutdown_sender or self.default_shutdown_sender
+        self.event_logger = event_logger or (lambda _event_type, _data: None)
         self.state = self.state_store.load()
         self.sent_warnings: set[int] = set()
         self.last_tick_at: datetime | None = None
@@ -78,6 +80,7 @@ class KidServiceCore:
         decision = evaluate_policy(policy, self.state, username, now)
         if decision.should_lock:
             self.helper_sender({"type": "lock", "reason": decision.reason})
+            self.event_logger("lock.requested", {"reason": decision.reason or "unknown"})
             self.state = AgentState(
                 current_date=self.state.current_date,
                 usage_seconds_by_user=self.state.usage_seconds_by_user,
@@ -153,6 +156,7 @@ class KidServiceCore:
             helper_last_seen_at=self.state.helper_last_seen_at,
         )
         self.state_store.save(self.state)
+        self.event_logger("policy.accepted", {"version": policy.policy_version})
         return {"accepted_policy_version": policy.policy_version}
 
     def handle_set_limit(self, body: dict) -> dict:
@@ -186,15 +190,19 @@ class KidServiceCore:
     def handle_lock(self, body: dict) -> dict:
         reason = body.get("reason", "manual")
         self.helper_sender({"type": "lock", "reason": reason})
+        self.event_logger("lock.requested", {"reason": reason})
         return {"lock_requested": True, "reason": reason}
 
     def handle_message(self, body: dict) -> dict:
-        self.helper_sender({"type": "message", "text": str(body.get("message", ""))})
+        text = str(body.get("message", ""))
+        self.helper_sender({"type": "message", "text": text})
+        self.event_logger("message.sent", {"length": len(text)})
         return {"message_sent": True}
 
     def handle_shutdown(self, body: dict) -> dict:
         seconds = int(body.get("seconds", 60))
         self.shutdown_sender(seconds)
+        self.event_logger("shutdown.requested", {"seconds": seconds})
         return {"shutdown_requested": True, "seconds": seconds}
 
     def handlers(self) -> dict[str, Callable[[dict], dict]]:
