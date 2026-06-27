@@ -24,3 +24,14 @@ def test_helper_ipc_appends_and_reads_command_file(tmp_path):
         {"type": "lock", "reason": "daily_limit"},
         {"type": "warning", "minutes": 1},
     ]
+
+
+def test_helper_ipc_can_resume_from_previous_offset(tmp_path):
+    command_file = tmp_path / "helper_commands.jsonl"
+    append_command(command_file, {"type": "message", "text": "old"})
+    offset = command_file.stat().st_size
+    append_command(command_file, {"type": "message", "text": "new"})
+
+    assert list(read_commands(command_file, start_offset=offset)) == [
+        {"type": "message", "text": "new"}
+    ]

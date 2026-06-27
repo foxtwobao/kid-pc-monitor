@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import os
 from pathlib import Path
 import sys
 import time
@@ -12,6 +13,27 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.helper_ipc import decode_message, read_commands
+
+
+def default_offset_path() -> Path:
+    base = os.environ.get("LOCALAPPDATA")
+    if base:
+        return Path(base) / "KidPCMonitor" / "helper.offset"
+    return Path.home() / ".kid-pc-monitor-helper.offset"
+
+
+def load_offset(path: Path) -> int:
+    if not path.exists():
+        return 0
+    try:
+        return int(path.read_text(encoding="utf-8").strip() or "0")
+    except ValueError:
+        return 0
+
+
+def save_offset(path: Path, offset: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(str(offset), encoding="utf-8")
 
 
 def lock_workstation() -> None:
@@ -53,26 +75,33 @@ def run_stdin() -> int:
     return 0
 
 
-def run_command_file(path: Path, poll_seconds: float = 1.0) -> int:
-    offset = 0
+def run_command_file(path: Path, poll_seconds: float = 1.0, offset_path: Path | None = None) -> int:
+    offset_file = offset_path or default_offset_path()
+    offset = load_offset(offset_file)
     while True:
         if path.exists():
             with path.open("r", encoding="utf-8") as handle:
+                file_size = path.stat().st_size
+                if offset > file_size:
+                    offset = 0
                 handle.seek(offset)
                 for line in handle:
                     line = line.strip()
                     if line:
                         handle_message(decode_message(line))
                 offset = handle.tell()
+                save_offset(offset_file, offset)
         time.sleep(poll_seconds)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--command-file")
+    parser.add_argument("--offset-file")
     args = parser.parse_args()
     if args.command_file:
-        return run_command_file(Path(args.command_file))
+        offset_path = Path(args.offset_file) if args.offset_file else None
+        return run_command_file(Path(args.command_file), offset_path=offset_path)
     return run_stdin()
 
 
