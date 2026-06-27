@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-import ctypes
 import argparse
+import ctypes
 from pathlib import Path
 import sys
 import time
 import tkinter as tk
 from tkinter import messagebox
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.helper_ipc import decode_message, read_commands
 
