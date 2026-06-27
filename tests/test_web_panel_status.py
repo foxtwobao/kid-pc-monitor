@@ -212,6 +212,23 @@ def test_web_panel_pages_render_from_bundled_templates():
     assert control_response.status_code == 200
 
 
+def test_locked_control_page_shows_unlock_action(monkeypatch):
+    discovered_pcs.clear()
+    discovered_pcs["192.168.10.251"] = {"hostname": "kid-laptop", "locked": True}
+    monkeypatch.setattr("src.web_panel.check_pc_status", lambda _ip: "LOCKED")
+    monkeypatch.setattr("src.web_panel.get_current_user", lambda _ip: None)
+    monkeypatch.setattr("src.web_panel.get_usage_limit", lambda _ip: None)
+    monkeypatch.setattr("src.web_panel.get_lock_times", lambda _ip: None)
+    monkeypatch.setattr("src.web_panel.get_time_remaining", lambda _ip: None)
+    monkeypatch.setattr("src.web_panel.sync_pending_command", lambda _ip: False)
+
+    response = app.test_client().get("/control/192.168.10.251")
+
+    assert response.status_code == 200
+    assert b"Unlock Computer" in response.data
+    assert b"performAction('clear_all')" in response.data
+
+
 def test_save_device_secret_rejects_non_hex_secret(tmp_path):
     try:
         save_device_secret("192.168.10.251", "not-hex", secrets_file=tmp_path / "secrets.json")

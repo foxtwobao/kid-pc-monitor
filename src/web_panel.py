@@ -492,6 +492,8 @@ def action():
         success, response = send_command(ip, "CLEAR_LOCK_TIMES")
     elif action_type == 'clear_all':
         success, response = send_command(ip, "CLEAR_ALL")
+        if success and ip in discovered_pcs:
+            discovered_pcs[ip]['locked'] = False
     else:
         success, response = False, "Unknown action"
 
@@ -887,6 +889,9 @@ CONTROL_TEMPLATE = '''
         {% if pc_info.locked %}
         <div class="status-message" style="display: block; background-color: #fff3cd; color: #856404;">
             🔒 This computer is currently LOCKED
+            <button class="btn btn-limit" style="margin-top: 12px;" onclick="performAction('clear_all')">
+                Unlock Computer
+            </button>
         </div>
         {% endif %}
         
@@ -958,7 +963,7 @@ CONTROL_TEMPLATE = '''
             .then(data => {
                 showStatus(data.response, data.success);
                 // Reload page after 2 seconds to update lock status
-                if (data.success && (action === 'lock' || action === 'shutdown')) {
+                if (data.success && (action === 'lock' || action === 'shutdown' || action === 'clear_all')) {
                     setTimeout(() => {
                         location.reload();
                     }, 2000);
