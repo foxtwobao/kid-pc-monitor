@@ -37,6 +37,7 @@ class KidServiceCore:
         self.state = self.state_store.load()
         self.sent_warnings: set[int] = set()
         self.last_tick_at: datetime | None = None
+        self.last_tick_username: str | None = None
 
     @staticmethod
     def default_shutdown_sender(seconds: int) -> None:
@@ -82,11 +83,14 @@ class KidServiceCore:
         policy = self.load_policy()
         if policy is None:
             return
+        self.state = self.state.for_today()
         username = self.username_provider()
         if not username:
+            self.last_tick_at = None
+            self.last_tick_username = None
+            self.state_store.save(self.state)
             return
         now = self.now_provider()
-        self.state = self.state.for_today()
         self.account_usage(username, now)
         decision = evaluate_policy(policy, self.state, username, now)
         if decision.should_lock:
@@ -119,11 +123,13 @@ class KidServiceCore:
         self.state_store.save(self.state)
 
     def account_usage(self, username: str, now: datetime) -> None:
-        if self.last_tick_at is None:
+        if self.last_tick_at is None or self.last_tick_username != username:
             self.last_tick_at = now
+            self.last_tick_username = username
             return
         elapsed_seconds = int((now - self.last_tick_at).total_seconds())
         self.last_tick_at = now
+        self.last_tick_username = username
         if elapsed_seconds <= 0:
             return
         usage = dict(self.state.usage_seconds_by_user)

@@ -351,6 +351,33 @@ def test_service_core_does_not_account_usage_without_interactive_user(tmp_path):
     assert core.state.active_lock_reason is None
 
 
+def test_service_core_does_not_count_logged_out_gap_after_user_returns(tmp_path):
+    current_time = {"value": datetime(2026, 6, 27, 12, 0, 0, tzinfo=timezone.utc)}
+    current_user = {"value": "kid"}
+    policy_path = tmp_path / "policy.json"
+    state_path = tmp_path / "state.json"
+    policy_path.write_text(__import__("json").dumps(make_policy(limit=60).to_dict()), encoding="utf-8")
+    core = KidServiceCore(
+        policy_path=policy_path,
+        state_path=state_path,
+        username_provider=lambda: current_user["value"],
+        now_provider=lambda: current_time["value"],
+        helper_sender=lambda message: None,
+    )
+
+    core.tick()
+    current_user["value"] = ""
+    current_time["value"] = datetime(2026, 6, 27, 12, 10, 0, tzinfo=timezone.utc)
+    core.tick()
+    current_user["value"] = "kid"
+    current_time["value"] = datetime(2026, 6, 27, 12, 20, 0, tzinfo=timezone.utc)
+    core.tick()
+    current_time["value"] = datetime(2026, 6, 27, 12, 20, 30, tzinfo=timezone.utc)
+    core.tick()
+
+    assert core.state.usage_seconds_by_user["kid"] == 30
+
+
 def test_service_core_locks_after_locally_accounted_usage_reaches_limit(tmp_path):
     sent_messages = []
     times = iter(
