@@ -106,6 +106,7 @@ def test_monitored_user_matches_windows_domain_qualified_name():
 
 def test_service_core_requests_lock_when_policy_says_lock(tmp_path):
     sent_messages = []
+    locked_sessions = []
     policy_path = tmp_path / "policy.json"
     state_path = tmp_path / "state.json"
     policy = make_policy(limit=1)
@@ -117,12 +118,14 @@ def test_service_core_requests_lock_when_policy_says_lock(tmp_path):
         username_provider=lambda: "kid",
         now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
         helper_sender=sent_messages.append,
+        session_locker=lambda: locked_sessions.append(True),
     )
     core.state = make_state(seconds=60)
 
     core.tick()
 
     assert sent_messages[-1] == {"type": "lock", "reason": "daily_limit"}
+    assert locked_sessions == [True]
 
 
 def test_service_core_can_apply_limit_command_without_network_dependency(tmp_path):
@@ -198,6 +201,28 @@ def test_service_core_can_send_parent_message_to_helper(tmp_path):
     assert response == {"message_sent": True}
     assert sent_messages == [{"type": "message", "text": "Dinner time"}]
     assert events == [("message.sent", {"length": 11})]
+
+
+def test_service_core_manual_lock_disconnects_remote_sessions(tmp_path):
+    sent_messages = []
+    locked_sessions = []
+    events = []
+    core = KidServiceCore(
+        policy_path=tmp_path / "policy.json",
+        state_path=tmp_path / "state.json",
+        username_provider=lambda: "kid",
+        now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
+        helper_sender=sent_messages.append,
+        session_locker=lambda: locked_sessions.append(True),
+        event_logger=lambda event_type, data: events.append((event_type, data)),
+    )
+
+    response = core.handle_lock({"reason": "manual"})
+
+    assert response == {"lock_requested": True, "reason": "manual"}
+    assert sent_messages == [{"type": "lock", "reason": "manual"}]
+    assert locked_sessions == [True]
+    assert events == [("lock.requested", {"reason": "manual"})]
 
 
 def test_service_core_can_request_shutdown(tmp_path):

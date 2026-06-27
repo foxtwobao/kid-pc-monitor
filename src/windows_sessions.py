@@ -75,6 +75,7 @@ def enumerate_sessions() -> list[dict]:
         return [
             {
                 "session_id": sessions_ptr[index].session_id,
+                "station_name": sessions_ptr[index].station_name or "",
                 "state": sessions_ptr[index].state,
             }
             for index in range(count.value)
@@ -90,3 +91,23 @@ def select_interactive_username(sessions: list[dict], query_username) -> str:
             if username:
                 return username
     return ""
+
+
+def active_remote_session_ids(sessions: list[dict]) -> list[int]:
+    remote_session_ids = []
+    for session in sessions:
+        station_name = str(session.get("station_name", "")).lower()
+        if session.get("state") == WTS_ACTIVE and station_name.startswith("rdp"):
+            remote_session_ids.append(int(session["session_id"]))
+    return remote_session_ids
+
+
+def disconnect_active_remote_sessions() -> None:
+    if sys.platform != "win32":
+        return
+    for session_id in active_remote_session_ids(enumerate_sessions()):
+        ctypes.windll.wtsapi32.WTSDisconnectSession(
+            WTS_CURRENT_SERVER_HANDLE,
+            session_id,
+            False,
+        )

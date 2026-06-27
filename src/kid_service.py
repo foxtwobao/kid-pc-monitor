@@ -21,6 +21,7 @@ class KidServiceCore:
         now_provider: Callable[[], datetime],
         helper_sender: Callable[[dict], None],
         helper_clearer: Callable[[], None] | None = None,
+        session_locker: Callable[[], None] | None = None,
         shutdown_sender: Callable[[int], None] | None = None,
         event_logger: Callable[[str, dict], None] | None = None,
     ):
@@ -30,6 +31,7 @@ class KidServiceCore:
         self.now_provider = now_provider
         self.helper_sender = helper_sender
         self.helper_clearer = helper_clearer or (lambda: None)
+        self.session_locker = session_locker or (lambda: None)
         self.shutdown_sender = shutdown_sender or self.default_shutdown_sender
         self.event_logger = event_logger or (lambda _event_type, _data: None)
         self.state = self.state_store.load()
@@ -84,7 +86,7 @@ class KidServiceCore:
         decision = evaluate_policy(policy, self.state, username, now)
         if decision.should_lock:
             if self.state.active_lock_reason != decision.reason:
-                self.helper_sender({"type": "lock", "reason": decision.reason})
+                self.request_lock(decision.reason or "unknown")
                 self.event_logger("lock.requested", {"reason": decision.reason or "unknown"})
             self.state = AgentState(
                 current_date=self.state.current_date,
@@ -127,6 +129,13 @@ class KidServiceCore:
             unsent_event_cursor=self.state.unsent_event_cursor,
             helper_last_seen_at=self.state.helper_last_seen_at,
         )
+
+    def request_lock(self, reason: str) -> None:
+        self.helper_sender({"type": "lock", "reason": reason})
+        try:
+            self.session_locker()
+        except Exception as exc:
+            self.event_logger("lock.session_locker_failed", {"error": str(exc)})
 
     def handle_status(self, _body: dict) -> dict:
         policy = self.load_policy()
@@ -185,7 +194,7 @@ class KidServiceCore:
 
     def handle_lock(self, body: dict) -> dict:
         reason = body.get("reason", "manual")
-        self.helper_sender({"type": "lock", "reason": reason})
+        self.request_lock(reason)
         self.event_logger("lock.requested", {"reason": reason})
         return {"lock_requested": True, "reason": reason}
 
