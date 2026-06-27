@@ -363,9 +363,37 @@ def test_service_core_sends_lock_once_while_limit_remains_active(tmp_path):
     core.tick()
 
     assert [message for message in sent_messages if message["type"] == "lock"] == [
-        {"type": "lock", "reason": "daily_limit"}
+        {"type": "lock", "reason": "daily_limit"},
+        {"type": "lock", "reason": "daily_limit"},
     ]
     assert events == [("lock.requested", {"reason": "daily_limit"})]
+
+
+def test_service_core_reasserts_manual_lock_until_cleared(tmp_path):
+    sent_messages = []
+    locked_sessions = []
+    policy_path = tmp_path / "policy.json"
+    state_path = tmp_path / "state.json"
+    policy_path.write_text(__import__("json").dumps(make_policy(limit=999).to_dict()), encoding="utf-8")
+    core = KidServiceCore(
+        policy_path=policy_path,
+        state_path=state_path,
+        username_provider=lambda: "kid",
+        now_provider=lambda: datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
+        helper_sender=sent_messages.append,
+        session_locker=lambda: locked_sessions.append(True),
+    )
+
+    core.handle_lock({"reason": "manual"})
+    core.tick()
+    core.handle_clear_all({})
+
+    assert sent_messages == [
+        {"type": "lock", "reason": "manual"},
+        {"type": "lock", "reason": "manual"},
+    ]
+    assert locked_sessions == [True, True]
+    assert core.state.active_lock_reason is None
 
 
 def test_service_core_clears_stale_lock_reason_when_policy_no_longer_locks(tmp_path):

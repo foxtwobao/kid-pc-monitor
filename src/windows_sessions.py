@@ -102,12 +102,27 @@ def active_remote_session_ids(sessions: list[dict]) -> list[int]:
     return remote_session_ids
 
 
+def active_session_ids(sessions: list[dict]) -> list[int]:
+    return [int(session["session_id"]) for session in sessions if session.get("state") == WTS_ACTIVE]
+
+
+def _disconnect_session(session_id: int) -> None:
+    ctypes.windll.wtsapi32.WTSDisconnectSession(
+        WTS_CURRENT_SERVER_HANDLE,
+        session_id,
+        False,
+    )
+
+
 def disconnect_active_remote_sessions() -> None:
     if sys.platform != "win32":
         return
     for session_id in active_remote_session_ids(enumerate_sessions()):
-        ctypes.windll.wtsapi32.WTSDisconnectSession(
-            WTS_CURRENT_SERVER_HANDLE,
-            session_id,
-            False,
-        )
+        _disconnect_session(session_id)
+
+
+def disconnect_active_sessions() -> None:
+    if sys.platform != "win32":
+        return
+    for session_id in active_session_ids(enumerate_sessions()):
+        _disconnect_session(session_id)

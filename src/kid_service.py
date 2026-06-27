@@ -85,8 +85,8 @@ class KidServiceCore:
         self.account_usage(username, now)
         decision = evaluate_policy(policy, self.state, username, now)
         if decision.should_lock:
+            self.request_lock(decision.reason or "unknown")
             if self.state.active_lock_reason != decision.reason:
-                self.request_lock(decision.reason or "unknown")
                 self.event_logger("lock.requested", {"reason": decision.reason or "unknown"})
             self.state = AgentState(
                 current_date=self.state.current_date,
@@ -99,6 +99,8 @@ class KidServiceCore:
         elif decision.warning_minutes is not None and decision.warning_minutes not in self.sent_warnings:
             self.sent_warnings.add(decision.warning_minutes)
             self.helper_sender({"type": "warning", "minutes": decision.warning_minutes})
+        elif self.state.active_lock_reason == "manual":
+            self.request_lock("manual")
         elif self.state.active_lock_reason is not None:
             self.helper_clearer()
             self.state = AgentState(
@@ -190,11 +192,31 @@ class KidServiceCore:
 
     def handle_clear_all(self, _body: dict) -> dict:
         policy = self.next_policy(daily_limit_minutes=None, bedtime_windows=[])
-        return self.accept_policy(policy)
+        response = self.accept_policy(policy)
+        self.helper_clearer()
+        self.state = AgentState(
+            current_date=self.state.current_date,
+            usage_seconds_by_user=self.state.usage_seconds_by_user,
+            active_lock_reason=None,
+            last_policy_version=self.state.last_policy_version,
+            unsent_event_cursor=self.state.unsent_event_cursor,
+            helper_last_seen_at=self.state.helper_last_seen_at,
+        )
+        self.state_store.save(self.state)
+        return response
 
     def handle_lock(self, body: dict) -> dict:
         reason = body.get("reason", "manual")
         self.request_lock(reason)
+        self.state = AgentState(
+            current_date=self.state.current_date,
+            usage_seconds_by_user=self.state.usage_seconds_by_user,
+            active_lock_reason=reason,
+            last_policy_version=self.state.last_policy_version,
+            unsent_event_cursor=self.state.unsent_event_cursor,
+            helper_last_seen_at=self.state.helper_last_seen_at,
+        )
+        self.state_store.save(self.state)
         self.event_logger("lock.requested", {"reason": reason})
         return {"lock_requested": True, "reason": reason}
 
