@@ -27,6 +27,12 @@ def build_core() -> KidServiceCore:
     )
 
 
+def should_continue(stop_event) -> bool:
+    if stop_event is None:
+        return True
+    return not stop_event.wait(1)
+
+
 def run_agent(stop_event=None) -> None:
     core = build_core()
     dispatcher = CommandDispatcher(
@@ -38,9 +44,8 @@ def run_agent(stop_event=None) -> None:
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        while stop_event is None or stop_event.wait(1) != 0:
+        while should_continue(stop_event):
             core.tick()
-            time.sleep(1)
     finally:
         server.shutdown()
         server.server_close()
