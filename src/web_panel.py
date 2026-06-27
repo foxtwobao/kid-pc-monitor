@@ -296,6 +296,99 @@ def time_remaining_from_status(status):
 def current_user_from_status(status):
     return status.get("current_user")
 
+
+def _username_variants(username):
+    normalized = str(username or "").strip()
+    if not normalized:
+        return set()
+    variants = {normalized.lower()}
+    if "\\" in normalized:
+        variants.add(normalized.rsplit("\\", 1)[1].lower())
+    if "@" in normalized:
+        variants.add(normalized.split("@", 1)[0].lower())
+    return variants
+
+
+def _name_matches(configured, actual):
+    return bool(_username_variants(configured) & _username_variants(actual))
+
+
+def format_usage_duration(seconds):
+    minutes = max(0, int(seconds) // 60)
+    hours, remaining_minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {remaining_minutes}m"
+    return f"{remaining_minutes}m"
+
+
+def today_usage_seconds_from_status(status, fallback_monitored_users=None):
+    state = status.get("state", {}) if status else {}
+    usage = state.get("usage_seconds_by_user", {})
+    policy = status.get("policy") or {} if status else {}
+    monitored_users = [
+        str(user).strip()
+        for user in (policy.get("monitored_users") or fallback_monitored_users or [])
+        if str(user).strip()
+    ]
+    if monitored_users:
+        return sum(
+            int(seconds)
+            for username, seconds in usage.items()
+            if any(_name_matches(monitored, username) for monitored in monitored_users)
+        )
+    current_user = status.get("current_user") if status else None
+    if current_user and current_user in usage:
+        return int(usage[current_user])
+    return sum(int(seconds) for seconds in usage.values())
+
+
+def today_usage_from_status(status, fallback_monitored_users=None):
+    return format_usage_duration(today_usage_seconds_from_status(status, fallback_monitored_users))
+
+
+def client_status_from_status(status):
+    if not status:
+        return "Offline"
+    state = status.get("state", {})
+    lock_reason = state.get("active_lock_reason")
+    if lock_reason:
+        return f"Locked ({lock_reason})"
+    if status.get("current_user"):
+        return "Active"
+    return "Locked/Disconnected"
+
+
+def apply_status_to_pc_info(pc_info, status):
+    if not status:
+        pc_info["client_status"] = "Offline"
+        pc_info["status"] = "offline"
+        pc_info["locked"] = False
+        pc_info.pop("current_user", None)
+        pc_info["today_usage"] = "0m"
+        pc_info["time_remaining"] = None
+        return pc_info
+
+    policy = status.get("policy") or {}
+    state = status.get("state", {})
+    current_user = status.get("current_user")
+    lock_reason = state.get("active_lock_reason")
+
+    pc_info["status"] = "online"
+    pc_info["client_status"] = client_status_from_status(status)
+    pc_info["locked"] = bool(lock_reason)
+    if current_user:
+        pc_info["current_user"] = current_user
+    else:
+        pc_info.pop("current_user", None)
+    if policy.get("monitored_users"):
+        pc_info["monitored_users"] = policy.get("monitored_users")
+    pc_info["usage_limit"] = policy.get("daily_limit_minutes")
+    pc_info["lock_times"] = [window["start"] for window in policy.get("bedtime_windows", [])]
+    pc_info["time_remaining"] = time_remaining_from_status(status)
+    pc_info["today_usage"] = today_usage_from_status(status, pc_info.get("monitored_users"))
+    return pc_info
+
+
 def get_local_ip():
     """Get the local IP address of this machine"""
     try:
@@ -410,17 +503,12 @@ def index():
     """Main page showing all discovered PCs"""
     ensure_paired_devices_visible()
 
-    # Update lock status and current user for all PCs
+    # Update runtime status for all PCs from a single signed status request.
     for ip in list(discovered_pcs.keys()):
         if ip not in discovered_pcs:
             continue
-        status = check_pc_status(ip)
-        discovered_pcs[ip]['locked'] = (status == "LOCKED")
-
-        # Get current user
-        username = get_current_user(ip)
-        if username:
-            discovered_pcs[ip]['current_user'] = username
+        status = query_status(ip)
+        apply_status_to_pc_info(discovered_pcs[ip], status)
         discovered_pcs[ip]['pending_sync'] = ip in PENDING_COMMANDS
 
     return render_template_string(INDEX_TEMPLATE,
@@ -439,24 +527,8 @@ def control(ip):
     """Control page for a specific PC"""
     pc_info = discovered_pcs.get(ip, {'hostname': 'Unknown', 'status': 'unknown'})
     sync_pending_command(ip)
-    # Check current lock status
-    status = check_pc_status(ip)
-    pc_info['locked'] = (status == "LOCKED")
-
-    # Get current user
-    username = get_current_user(ip)
-    if username:
-        pc_info['current_user'] = username
-
-    # Get current limits and time remaining (always update, even if None)
-    usage_limit = get_usage_limit(ip)
-    pc_info['usage_limit'] = usage_limit  # Update even if None to clear old values
-
-    lock_times = get_lock_times(ip)
-    pc_info['lock_times'] = lock_times  # Update even if None to clear old values
-
-    time_remaining = get_time_remaining(ip)
-    pc_info['time_remaining'] = time_remaining  # Update even if None
+    status = query_status(ip)
+    apply_status_to_pc_info(pc_info, status)
     pc_info['pending_sync'] = ip in PENDING_COMMANDS
 
     return render_template_string(CONTROL_TEMPLATE, ip=ip, pc_info=pc_info)
@@ -608,6 +680,10 @@ INDEX_TEMPLATE = '''
             background-color: #ff9800;
             color: white;
         }
+        .status.offline {
+            background-color: #9e9e9e;
+            color: white;
+        }
         .last-scan {
             text-align: center;
             color: #666;
@@ -697,10 +773,14 @@ INDEX_TEMPLATE = '''
                 {% if info.get('current_user') %}
                 <div class="pc-ip">👤 User: {{ info.current_user }}</div>
                 {% endif %}
+                <div class="pc-ip">📡 Status: {{ info.get('client_status', 'Offline') }}</div>
+                <div class="pc-ip">⏱️ Today: {{ info.get('today_usage', '0m') }}</div>
                 {% if info.get('pending_sync') %}
                 <div class="pc-ip" style="color: #ff9800;">⏳ Pending policy sync</div>
                 {% endif %}
-                {% if info.locked %}
+                {% if info.get('client_status') == 'Offline' %}
+                <span class="status offline">● OFFLINE</span>
+                {% elif info.locked %}
                 <span class="status locked">🔒 LOCKED</span>
                 {% else %}
                 <span class="status online">● ONLINE</span>
@@ -861,6 +941,10 @@ CONTROL_TEMPLATE = '''
         <!-- Display Current Settings (Always Visible) -->
         <div class="action-group">
             <div class="action-title">📊 Current Settings</div>
+
+            <p>📡 <strong>Client Status:</strong> {{ pc_info.get('client_status', 'Offline') }}</p>
+
+            <p>📈 <strong>Today Usage:</strong> {{ pc_info.get('today_usage', '0m') }}</p>
 
             <p>👥 <strong>Monitored Users:</strong>
             {% if pc_info.get('monitored_users') %}

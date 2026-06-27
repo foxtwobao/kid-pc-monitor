@@ -15,6 +15,8 @@ from src.web_panel import (
     save_device_secret,
     load_device_profiles,
     sync_pending_command,
+    client_status_from_status,
+    today_usage_from_status,
     time_remaining_from_status,
     app,
 )
@@ -55,6 +57,27 @@ def test_child_install_command_uses_parent_url_and_pairing_token(monkeypatch):
 
 def test_current_user_from_status_reads_signed_status_body():
     assert current_user_from_status({"current_user": "DESKTOP\\kid"}) == "DESKTOP\\kid"
+
+
+def test_today_usage_from_status_matches_monitored_domain_user():
+    status = {
+        "policy": {"monitored_users": ["Phil"]},
+        "state": {
+            "usage_seconds_by_user": {
+                "DESKTOP\\Phil": 65 * 60,
+                "DESKTOP\\admin": 10 * 60,
+            }
+        },
+    }
+
+    assert today_usage_from_status(status) == "1h 5m"
+
+
+def test_client_status_from_status_distinguishes_active_locked_and_offline():
+    assert client_status_from_status(None) == "Offline"
+    assert client_status_from_status({"current_user": "DESKTOP\\kid", "state": {}}) == "Active"
+    assert client_status_from_status({"current_user": "", "state": {}}) == "Locked/Disconnected"
+    assert client_status_from_status({"state": {"active_lock_reason": "manual"}}) == "Locked (manual)"
 
 
 def test_policy_commands_are_pending_sync_candidates():
@@ -155,8 +178,7 @@ def test_index_shows_paired_device_from_disk(tmp_path, monkeypatch):
     )
     monkeypatch.setenv("KID_PC_DEVICE_SECRETS_FILE", str(secret_file))
     monkeypatch.setenv("KID_PC_DEVICE_PROFILES_FILE", str(profile_file))
-    monkeypatch.setattr("src.web_panel.check_pc_status", lambda _ip: "UNKNOWN")
-    monkeypatch.setattr("src.web_panel.get_current_user", lambda _ip: None)
+    monkeypatch.setattr("src.web_panel.query_status", lambda _ip: None)
     discovered_pcs.clear()
 
     response = app.test_client().get("/")
@@ -175,11 +197,14 @@ def test_control_page_shows_monitored_users(monkeypatch):
         "locked": False,
         "monitored_users": ["Phil"],
     }
-    monkeypatch.setattr("src.web_panel.check_pc_status", lambda _ip: "UNLOCKED")
-    monkeypatch.setattr("src.web_panel.get_current_user", lambda _ip: None)
-    monkeypatch.setattr("src.web_panel.get_usage_limit", lambda _ip: None)
-    monkeypatch.setattr("src.web_panel.get_lock_times", lambda _ip: None)
-    monkeypatch.setattr("src.web_panel.get_time_remaining", lambda _ip: None)
+    monkeypatch.setattr(
+        "src.web_panel.query_status",
+        lambda _ip: {
+            "policy": {"monitored_users": ["Phil"], "daily_limit_minutes": 120, "bedtime_windows": []},
+            "state": {"usage_seconds_by_user": {"DESKTOP\\Phil": 30 * 60}},
+            "current_user": "DESKTOP\\Phil",
+        },
+    )
     monkeypatch.setattr("src.web_panel.sync_pending_command", lambda _ip: False)
 
     response = app.test_client().get("/control/192.168.10.251")
@@ -187,6 +212,10 @@ def test_control_page_shows_monitored_users(monkeypatch):
     assert response.status_code == 200
     assert b"Monitored Users:" in response.data
     assert b"Phil" in response.data
+    assert b"Client Status:" in response.data
+    assert b"Active" in response.data
+    assert b"Today Usage:" in response.data
+    assert b"30m" in response.data
 
 
 def test_ensure_paired_devices_visible_keeps_existing_runtime_status(tmp_path, monkeypatch):
@@ -239,11 +268,14 @@ def test_web_panel_pages_render_from_bundled_templates():
 def test_locked_control_page_shows_unlock_action(monkeypatch):
     discovered_pcs.clear()
     discovered_pcs["192.168.10.251"] = {"hostname": "kid-laptop", "locked": True}
-    monkeypatch.setattr("src.web_panel.check_pc_status", lambda _ip: "LOCKED")
-    monkeypatch.setattr("src.web_panel.get_current_user", lambda _ip: None)
-    monkeypatch.setattr("src.web_panel.get_usage_limit", lambda _ip: None)
-    monkeypatch.setattr("src.web_panel.get_lock_times", lambda _ip: None)
-    monkeypatch.setattr("src.web_panel.get_time_remaining", lambda _ip: None)
+    monkeypatch.setattr(
+        "src.web_panel.query_status",
+        lambda _ip: {
+            "policy": {"monitored_users": ["kid"], "daily_limit_minutes": None, "bedtime_windows": []},
+            "state": {"active_lock_reason": "manual", "usage_seconds_by_user": {}},
+            "current_user": "",
+        },
+    )
     monkeypatch.setattr("src.web_panel.sync_pending_command", lambda _ip: False)
 
     response = app.test_client().get("/control/192.168.10.251")
