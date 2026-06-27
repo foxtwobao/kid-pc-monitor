@@ -29,3 +29,6 @@ Thumbs.db
 pc_control_state.json
 *.log
 config_local.py
+
+# Local implementation worktrees
+.worktrees/
