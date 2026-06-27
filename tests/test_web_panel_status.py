@@ -233,6 +233,7 @@ def test_web_panel_pages_render_from_bundled_templates():
     assert index_response.status_code == 200
     assert b"Install-KidPCMonitorChild" in index_response.data
     assert control_response.status_code == 200
+    assert b"setTimeout(function() { location.reload(); }, 30000);" in control_response.data
 
 
 def test_locked_control_page_shows_unlock_action(monkeypatch):

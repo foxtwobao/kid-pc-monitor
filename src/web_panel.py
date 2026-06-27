@@ -955,6 +955,8 @@ CONTROL_TEMPLATE = '''
     </div>
     
     <script>
+        setTimeout(function() { location.reload(); }, 30000);
+
         function showStatus(message, isSuccess) {
             const statusEl = document.getElementById('status-message');
             statusEl.textContent = message;
