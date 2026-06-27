@@ -106,6 +106,13 @@ def write_uninstall_hash(token: str) -> None:
     UNINSTALL_HASH_PATH.write_text(hashlib.sha256(token.encode("utf-8")).hexdigest(), encoding="utf-8")
 
 
+def default_pythonw() -> str:
+    pythonw = Path(sys.executable).with_name("pythonw.exe")
+    if pythonw.exists():
+        return str(pythonw)
+    return sys.executable
+
+
 def install_service() -> None:
     service_script = PROGRAM_DIR / "src" / "windows_service.py"
     action = "update" if service_exists() else "install"
@@ -118,7 +125,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--parent-ip", default=None)
     parser.add_argument("--uninstall-token", required=True)
-    parser.add_argument("--pythonw", default="pythonw.exe")
+    parser.add_argument("--pythonw", default=None)
     args = parser.parse_args()
     ensure_pywin32_available()
     stop_existing_runtime()
@@ -127,7 +134,7 @@ def main() -> int:
     write_uninstall_hash(args.uninstall_token)
     apply_acls()
     configure_firewall(args.parent_ip)
-    register_helper_run_key(args.pythonw)
+    register_helper_run_key(args.pythonw or default_pythonw())
     install_service()
     print("Kid PC Monitor service installed.")
     return 0

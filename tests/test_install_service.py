@@ -66,6 +66,13 @@ def test_ensure_pywin32_available_explains_missing_dependency(monkeypatch):
     assert "pywin32 is required" in str(excinfo.value)
 
 
+def test_default_pythonw_prefers_pythonw_next_to_current_python(monkeypatch):
+    monkeypatch.setattr(install_service.sys, "executable", str(install_service.Path("/opt/python/python.exe")))
+    monkeypatch.setattr(install_service.Path, "exists", lambda self: str(self).endswith("pythonw.exe"))
+
+    assert install_service.default_pythonw() == str(install_service.Path("/opt/python/pythonw.exe"))
+
+
 def test_stop_existing_runtime_tolerates_stop_command_failure_when_service_stops(monkeypatch):
     commands = []
     states = iter(["RUNNING", "STOPPED"])

@@ -38,6 +38,8 @@ def test_child_bootstrap_installs_service_and_pairs_with_parent():
     assert "Start-Process" in script
     assert ".ExitCode" in script
     assert "Get-KidPCMonitorPython" in script
+    assert "function Get-KidPCMonitorPythonw" in script
+    assert "--pythonw" in script
     assert "function Get-KidPCMonitorChildUser" in script
     assert "[string]$ChildUser" in script
     assert "Get-KidPCMonitorSelectableUsers" in script

@@ -93,6 +93,15 @@ function Get-KidPCMonitorPython {
     throw "Python 3.10+ was installed, but python.exe could not be found. Open a new Administrator PowerShell and rerun the one-line command."
 }
 
+function Get-KidPCMonitorPythonw {
+    param([string]$PythonPath)
+    $pythonw = Join-Path (Split-Path -Parent $PythonPath) "pythonw.exe"
+    if (Test-Path $pythonw) {
+        return $pythonw
+    }
+    return $PythonPath
+}
+
 function Test-KidPCMonitorLocalAdmin {
     param([string]$UserName)
     $shortName = Get-KidPCMonitorShortUserName $UserName
@@ -278,6 +287,7 @@ function Install-KidPCMonitorChild {
     $parentHost = $parentUri.Host
 
     $python = Get-KidPCMonitorPython
+    $pythonw = Get-KidPCMonitorPythonw $python
 
     $workDir = Join-Path $env:TEMP ("kid-pc-monitor-" + [Guid]::NewGuid().ToString("N"))
     $zipPath = Join-Path $workDir "kid-pc-monitor.zip"
@@ -298,7 +308,7 @@ function Install-KidPCMonitorChild {
 
     Write-Host "Installing child-side Windows service..."
     Invoke-KidPCMonitorNativeCommand -FailureMessage "Child service installer failed." -Command {
-        & $python (Join-Path $repoDir.FullName "scripts\install_service.py") --parent-ip $parentHost --uninstall-token $PairingToken
+        & $python (Join-Path $repoDir.FullName "scripts\install_service.py") --parent-ip $parentHost --uninstall-token $PairingToken --pythonw $pythonw
     }
     Test-KidPCMonitorChildConnectivity -ParentHost $parentHost
 
