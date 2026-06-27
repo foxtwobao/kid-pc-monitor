@@ -85,3 +85,34 @@ def test_helper_handles_message_for_matching_target_user(monkeypatch):
     helper.handle_message({"type": "message", "text": "Dinner time", "users": ["DESKTOP\\test"]})
 
     assert shown == ["Dinner time"]
+
+
+def test_helper_updates_remaining_tooltip_for_matching_user(monkeypatch):
+    updates = []
+    monkeypatch.setattr(helper.getpass, "getuser", lambda: "Phil")
+    monkeypatch.setattr(helper, "update_remaining", lambda minutes: updates.append(minutes))
+
+    helper.handle_message({"type": "remaining", "minutes": 10, "users": ["DESKTOP\\Phil"]})
+
+    assert updates == [10]
+
+
+def test_helper_warning_uses_tray_notification(monkeypatch):
+    notifications = []
+
+    class FakeTray:
+        def notify_warning(self, minutes):
+            notifications.append(minutes)
+            return True
+
+    monkeypatch.setattr(helper, "tray_controller", FakeTray())
+    monkeypatch.setattr(helper.tk, "Tk", lambda: (_ for _ in ()).throw(AssertionError("modal shown")))
+
+    helper.show_warning(10)
+
+    assert notifications == [10]
+
+
+def test_format_remaining_tooltip_handles_no_limit():
+    assert helper.format_remaining_tooltip(None) == "Kid PC Monitor - no daily limit"
+    assert helper.format_remaining_tooltip(10) == "Kid PC Monitor - 10 minute(s) remaining"

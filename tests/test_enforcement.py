@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from src.enforcement import EnforcementDecision, evaluate_policy
+from src.enforcement import EnforcementDecision, evaluate_policy, remaining_daily_limit_minutes
 from src.kid_service import KidServiceCore
 from src.policy import BedtimeWindow, Policy
 from src.state_store import AgentState
@@ -53,6 +53,14 @@ def test_warns_when_limit_is_near():
 
     assert decision.should_lock is False
     assert decision.warning_minutes == 5
+
+
+def test_remaining_daily_limit_minutes_rounds_positive_time_up():
+    assert remaining_daily_limit_minutes(
+        policy=make_policy(limit=60),
+        state=make_state(seconds=(59 * 60) + 1),
+        username="kid",
+    ) == 1
 
 
 def test_locks_during_bedtime_window_that_crosses_midnight():
@@ -323,7 +331,68 @@ def test_service_core_accounts_usage_between_ticks(tmp_path):
     core.tick()
 
     assert core.state.usage_seconds_by_user["kid"] == 10
-    assert sent_messages == []
+    assert [message for message in sent_messages if message["type"] == "lock"] == []
+
+
+def test_service_core_sends_remaining_update_when_minute_changes(tmp_path):
+    sent_messages = []
+    times = iter(
+        [
+            datetime(2026, 6, 27, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 6, 27, 12, 1, 0, tzinfo=timezone.utc),
+            datetime(2026, 6, 27, 12, 1, 10, tzinfo=timezone.utc),
+        ]
+    )
+    policy_path = tmp_path / "policy.json"
+    state_path = tmp_path / "state.json"
+    policy_path.write_text(__import__("json").dumps(make_policy(limit=60).to_dict()), encoding="utf-8")
+    core = KidServiceCore(
+        policy_path=policy_path,
+        state_path=state_path,
+        username_provider=lambda: "kid",
+        now_provider=lambda: next(times),
+        helper_sender=sent_messages.append,
+    )
+
+    core.tick()
+    core.tick()
+    core.tick()
+
+    assert [message for message in sent_messages if message["type"] == "remaining"] == [
+        {"type": "remaining", "minutes": 60, "users": ["kid"]},
+        {"type": "remaining", "minutes": 59, "users": ["kid"]},
+    ]
+
+
+def test_service_core_sends_ten_minute_warning_once(tmp_path):
+    sent_messages = []
+    times = iter(
+        [
+            datetime(2026, 6, 27, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 6, 27, 12, 1, 0, tzinfo=timezone.utc),
+            datetime(2026, 6, 27, 12, 1, 1, tzinfo=timezone.utc),
+        ]
+    )
+    policy = make_policy(limit=11)
+    policy = Policy.from_dict({**policy.to_dict(), "warning_minutes": [10]})
+    policy_path = tmp_path / "policy.json"
+    state_path = tmp_path / "state.json"
+    policy_path.write_text(__import__("json").dumps(policy.to_dict()), encoding="utf-8")
+    core = KidServiceCore(
+        policy_path=policy_path,
+        state_path=state_path,
+        username_provider=lambda: "kid",
+        now_provider=lambda: next(times),
+        helper_sender=sent_messages.append,
+    )
+
+    core.tick()
+    core.tick()
+    core.tick()
+
+    assert [message for message in sent_messages if message["type"] == "warning"] == [
+        {"type": "warning", "minutes": 10, "users": ["kid"]}
+    ]
 
 
 def test_service_core_does_not_account_usage_without_interactive_user(tmp_path):
@@ -456,7 +525,7 @@ def test_service_core_reasserts_manual_lock_until_cleared(tmp_path):
     core.tick()
     core.handle_clear_all({})
 
-    assert sent_messages == [
+    assert [message for message in sent_messages if message["type"] == "lock"] == [
         {"type": "lock", "reason": "manual", "users": ["kid"]},
         {"type": "lock", "reason": "manual", "users": ["kid"]},
     ]

@@ -6,6 +6,7 @@ import getpass
 import os
 from pathlib import Path
 import sys
+import threading
 import time
 import tkinter as tk
 from tkinter import messagebox
@@ -14,6 +15,9 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.helper_ipc import decode_message, read_commands
+
+
+tray_controller = None
 
 
 def _username_variants(username: str) -> set[str]:
@@ -61,11 +65,67 @@ def save_offset(path: Path, offset: int) -> None:
     path.write_text(str(offset), encoding="utf-8")
 
 
+def format_remaining_tooltip(minutes: int | None) -> str:
+    if minutes is None:
+        return "Kid PC Monitor - no daily limit"
+    return f"Kid PC Monitor - {minutes} minute(s) remaining"
+
+
+class TrayController:
+    def __init__(self):
+        self.icon = None
+        self._lock = threading.Lock()
+
+    def start(self) -> None:
+        try:
+            import pystray
+            from PIL import Image, ImageDraw
+        except ImportError:
+            return
+
+        image = Image.new("RGB", (64, 64), "#1f6feb")
+        draw = ImageDraw.Draw(image)
+        draw.ellipse((10, 10, 54, 54), fill="#ffffff")
+        draw.rectangle((29, 16, 35, 48), fill="#1f6feb")
+        draw.rectangle((18, 29, 46, 35), fill="#1f6feb")
+
+        self.icon = pystray.Icon(
+            "KidPCMonitor",
+            image,
+            format_remaining_tooltip(None),
+            menu=pystray.Menu(pystray.MenuItem("Kid PC Monitor", lambda _icon, _item: None, enabled=False)),
+        )
+        self.icon.run_detached()
+
+    def update_remaining(self, minutes: int | None) -> None:
+        with self._lock:
+            if self.icon is not None:
+                self.icon.title = format_remaining_tooltip(minutes)
+
+    def notify_warning(self, minutes: int) -> bool:
+        with self._lock:
+            if self.icon is None:
+                return False
+            self.icon.notify(
+                f"Computer will lock in {minutes} minute(s).",
+                "Kid PC Monitor",
+            )
+            return True
+
+
+def create_tray_controller() -> TrayController:
+    tray = TrayController()
+    tray.start()
+    return tray
+
+
 def lock_workstation() -> None:
     ctypes.windll.user32.LockWorkStation()
 
 
 def show_warning(minutes: int) -> None:
+    if tray_controller is not None and tray_controller.notify_warning(minutes):
+        return
     root = tk.Tk()
     root.withdraw()
     root.attributes("-topmost", True)
@@ -83,6 +143,11 @@ def show_message(text: str, title: str = "Kid PC Monitor") -> None:
     root.destroy()
 
 
+def update_remaining(minutes: int | None) -> None:
+    if tray_controller is not None:
+        tray_controller.update_remaining(minutes)
+
+
 def handle_message(message: dict) -> None:
     if not message_targets_current_user(message):
         return
@@ -90,6 +155,9 @@ def handle_message(message: dict) -> None:
         lock_workstation()
     elif message["type"] == "warning":
         show_warning(int(message["minutes"]))
+    elif message["type"] == "remaining":
+        raw_minutes = message.get("minutes")
+        update_remaining(None if raw_minutes is None else int(raw_minutes))
     elif message["type"] == "message":
         show_message(str(message.get("text", "")))
     else:
@@ -103,6 +171,8 @@ def run_stdin() -> int:
 
 
 def run_command_file(path: Path, poll_seconds: float = 1.0, offset_path: Path | None = None) -> int:
+    global tray_controller
+    tray_controller = create_tray_controller()
     offset_file = offset_path or default_offset_path()
     offset = load_offset(offset_file)
     while True:

@@ -39,7 +39,7 @@ class Policy:
     bedtime_windows: list[BedtimeWindow] = field(default_factory=list)
     monitored_users: list[str] = field(default_factory=list)
     exempt_users: list[str] = field(default_factory=list)
-    warning_minutes: list[int] = field(default_factory=lambda: [15, 5, 1])
+    warning_minutes: list[int] = field(default_factory=lambda: [10])
     temporary_extensions: dict[str, int] = field(default_factory=dict)
     parent_panel_allowed_ips: list[str] = field(default_factory=list)
     updated_at: str = ""
@@ -78,7 +78,7 @@ class Policy:
             bedtime_windows=[BedtimeWindow(**item) for item in data.get("bedtime_windows", [])],
             monitored_users=list(data.get("monitored_users", [])),
             exempt_users=list(data.get("exempt_users", [])),
-            warning_minutes=list(data.get("warning_minutes", [15, 5, 1])),
+            warning_minutes=list(data.get("warning_minutes", [10])),
             temporary_extensions=dict(data.get("temporary_extensions", {})),
             parent_panel_allowed_ips=list(data.get("parent_panel_allowed_ips", [])),
             updated_at=data.get("updated_at", ""),

@@ -7,7 +7,7 @@ from pathlib import Path
 import time
 from typing import Callable
 
-from src.enforcement import evaluate_policy
+from src.enforcement import evaluate_policy, remaining_daily_limit_minutes
 from src.policy import BedtimeWindow, Policy
 from src.state_store import AgentState, StateStore, atomic_write_json
 
@@ -38,6 +38,7 @@ class KidServiceCore:
         self.sent_warnings: set[int] = set()
         self.last_tick_at: datetime | None = None
         self.last_tick_username: str | None = None
+        self.last_remaining_minutes: int | None = None
 
     @staticmethod
     def default_shutdown_sender(seconds: int) -> None:
@@ -60,7 +61,7 @@ class KidServiceCore:
             bedtime_windows=[],
             monitored_users=[],
             exempt_users=[],
-            warning_minutes=[15, 5, 1],
+            warning_minutes=[10],
             temporary_extensions={},
             parent_panel_allowed_ips=[],
             updated_at=self.now_provider().isoformat(),
@@ -92,6 +93,7 @@ class KidServiceCore:
             return
         now = self.now_provider()
         self.account_usage(username, now)
+        self.send_remaining_if_changed(policy, username)
         decision = evaluate_policy(policy, self.state, username, now)
         if decision.should_lock:
             self.request_lock(decision.reason or "unknown", [username])
@@ -107,7 +109,11 @@ class KidServiceCore:
             )
         elif decision.warning_minutes is not None and decision.warning_minutes not in self.sent_warnings:
             self.sent_warnings.add(decision.warning_minutes)
-            self.helper_sender({"type": "warning", "minutes": decision.warning_minutes})
+            self.helper_sender({
+                "type": "warning",
+                "minutes": decision.warning_minutes,
+                "users": [username],
+            })
         elif self.state.active_lock_reason == "manual":
             self.request_lock("manual", self.lock_targets(policy, username))
         elif self.state.active_lock_reason is not None:
@@ -121,6 +127,13 @@ class KidServiceCore:
                 helper_last_seen_at=self.state.helper_last_seen_at,
             )
         self.state_store.save(self.state)
+
+    def send_remaining_if_changed(self, policy: Policy, username: str) -> None:
+        remaining_minutes = remaining_daily_limit_minutes(policy, self.state, username)
+        if remaining_minutes is None or remaining_minutes == self.last_remaining_minutes:
+            return
+        self.last_remaining_minutes = remaining_minutes
+        self.helper_sender({"type": "remaining", "minutes": remaining_minutes, "users": [username]})
 
     def account_usage(self, username: str, now: datetime) -> None:
         if self.last_tick_at is None or self.last_tick_username != username:

@@ -196,6 +196,10 @@ function Set-KidPCMonitorInitialPolicy {
             $policy.PSObject.Properties.Remove("monitored_users")
         }
         $policy | Add-Member -NotePropertyName "monitored_users" -NotePropertyValue @($ChildUser)
+        if ($policy.PSObject.Properties.Name -contains "warning_minutes") {
+            $policy.PSObject.Properties.Remove("warning_minutes")
+        }
+        $policy | Add-Member -NotePropertyName "warning_minutes" -NotePropertyValue @(10)
         $policy.policy_version = [int]$policy.policy_version + 1
         $policy.updated_at = [DateTimeOffset]::Now.ToString("o")
     } else {
@@ -206,7 +210,7 @@ function Set-KidPCMonitorInitialPolicy {
             bedtime_windows = @()
             monitored_users = @($ChildUser)
             exempt_users = @()
-            warning_minutes = @(15, 5, 1)
+            warning_minutes = @(10)
             temporary_extensions = @{}
             parent_panel_allowed_ips = @()
             updated_at = [DateTimeOffset]::Now.ToString("o")

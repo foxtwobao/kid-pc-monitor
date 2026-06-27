@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, time
+import math
 
 from src.policy import Policy
 from src.state_store import AgentState
@@ -59,6 +60,16 @@ def _usage_seconds_for_user(state: AgentState, username: str) -> int:
     return 0
 
 
+def remaining_daily_limit_minutes(policy: Policy, state: AgentState, username: str) -> int | None:
+    if policy.daily_limit_minutes is None or not _user_is_monitored(policy, username):
+        return None
+    used_seconds = _usage_seconds_for_user(state, username)
+    remaining_seconds = policy.daily_limit_minutes * 60 - used_seconds
+    if remaining_seconds <= 0:
+        return 0
+    return math.ceil(remaining_seconds / 60)
+
+
 def evaluate_policy(
     policy: Policy,
     state: AgentState,
@@ -74,12 +85,10 @@ def evaluate_policy(
             return EnforcementDecision(True, "bedtime", None)
 
     if policy.daily_limit_minutes is not None:
-        used_seconds = _usage_seconds_for_user(state, username)
-        limit_seconds = policy.daily_limit_minutes * 60
-        remaining_seconds = limit_seconds - used_seconds
-        if remaining_seconds <= 0:
+        remaining_minutes = remaining_daily_limit_minutes(policy, state, username)
+        if remaining_minutes is not None and remaining_minutes <= 0:
             return EnforcementDecision(True, "daily_limit", None)
-        remaining_minutes = max(1, int(remaining_seconds / 60))
+        remaining_minutes = max(1, remaining_minutes or 0)
         matching_warnings = [
             warning for warning in sorted(policy.warning_minutes, reverse=True)
             if remaining_minutes <= warning
