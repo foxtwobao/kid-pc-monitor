@@ -8,6 +8,7 @@ import time
 from datetime import datetime
 
 from src.agent_auth import sign_message
+from src.policy import Policy
 from src.state_store import atomic_write_json
 
 app = Flask(__name__)
@@ -16,7 +17,9 @@ app = Flask(__name__)
 discovered_pcs = {}
 last_scan_time = None
 PENDING_COMMANDS = {}
+DESIRED_POLICIES = {}
 PENDING_COMMANDS_FILE = os.environ.get("KID_PC_PENDING_COMMANDS_FILE", "pending_commands.json")
+DESIRED_POLICIES_FILE = os.environ.get("KID_PC_DESIRED_POLICIES_FILE", "desired_policies.json")
 DEVICE_SECRETS_FILE = os.environ.get("KID_PC_DEVICE_SECRETS_FILE", "device_secrets.json")
 DEVICE_PROFILES_FILE = os.environ.get("KID_PC_DEVICE_PROFILES_FILE", "device_profiles.json")
 PAIRING_TOKEN_FILE = os.environ.get("KID_PC_PAIRING_TOKEN_FILE", "pairing.token")
@@ -106,7 +109,95 @@ def save_device_profile(ip, hostname, monitored_users, profiles_file=None):
     return profiles
 
 
+def load_desired_policies(desired_file=None):
+    path = os.fspath(desired_file or os.environ.get("KID_PC_DESIRED_POLICIES_FILE", DESIRED_POLICIES_FILE))
+    if not os.path.exists(path):
+        DESIRED_POLICIES.clear()
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    DESIRED_POLICIES.clear()
+    DESIRED_POLICIES.update(data if isinstance(data, dict) else {})
+    return DESIRED_POLICIES
+
+
+def save_desired_policies(policies=None, desired_file=None):
+    if policies is not None:
+        DESIRED_POLICIES.clear()
+        DESIRED_POLICIES.update(policies)
+    atomic_write_json(desired_file or os.environ.get("KID_PC_DESIRED_POLICIES_FILE", DESIRED_POLICIES_FILE), DESIRED_POLICIES)
+
+
+def default_policy_for_device(ip):
+    profile = load_device_profiles().get(str(ip), {})
+    if not isinstance(profile, dict):
+        profile = {}
+    return {
+        "device_id": str(ip),
+        "policy_version": 0,
+        "daily_limit_minutes": None,
+        "bedtime_windows": [],
+        "monitored_users": [
+            str(user).strip()
+            for user in profile.get("monitored_users", [])
+            if str(user).strip()
+        ],
+        "exempt_users": [],
+        "warning_minutes": [10],
+        "temporary_extensions": {},
+        "parent_panel_allowed_ips": [],
+        "updated_at": "",
+    }
+
+
+def desired_policy_base(ip, current_status=None, desired_file=None):
+    load_desired_policies(desired_file)
+    if str(ip) in DESIRED_POLICIES:
+        return dict(DESIRED_POLICIES[str(ip)])
+    if current_status and current_status.get("policy"):
+        return dict(current_status["policy"])
+    return default_policy_for_device(ip)
+
+
+def update_desired_policy(ip, body, current_status=None, desired_file=None, now_provider=None):
+    base = desired_policy_base(ip, current_status=current_status, desired_file=desired_file)
+    policy = dict(base)
+    command = body.get("command")
+    if command == "set_limit":
+        policy["daily_limit_minutes"] = int(body["minutes"])
+    elif command == "add_lock_time":
+        windows = list(policy.get("bedtime_windows", []))
+        windows.append({"start": str(body["time"]), "end": "23:59"})
+        policy["bedtime_windows"] = windows
+    elif command == "clear_usage_limit":
+        policy["daily_limit_minutes"] = None
+    elif command == "clear_lock_times":
+        policy["bedtime_windows"] = []
+    elif command == "clear_all":
+        policy["daily_limit_minutes"] = None
+        policy["bedtime_windows"] = []
+    elif command == "apply_policy":
+        policy = dict(body["policy"])
+    else:
+        raise ValueError(f"unsupported policy command: {command}")
+
+    policy["device_id"] = str(policy.get("device_id") or ip)
+    policy["policy_version"] = int(base.get("policy_version", 0)) + 1
+    policy["updated_at"] = (now_provider or datetime.now)()
+    if not isinstance(policy["updated_at"], str):
+        policy["updated_at"] = policy["updated_at"].isoformat()
+    validated = Policy.from_dict(policy).to_dict()
+    load_desired_policies(desired_file)
+    DESIRED_POLICIES[str(ip)] = validated
+    save_desired_policies(desired_file=desired_file)
+    return validated
+
+
 def ensure_paired_devices_visible():
+    load_desired_policies()
     profiles = load_device_profiles()
     secrets = load_device_secrets()
     for ip in sorted(set(profiles) | set(secrets)):
@@ -123,11 +214,18 @@ def ensure_paired_devices_visible():
         if not entry.get("hostname") or entry.get("hostname", "").startswith("PC at "):
             entry["hostname"] = str(profile.get("hostname") or f"PC at {ip}")
         entry["pending_sync"] = str(ip) in PENDING_COMMANDS
-        entry["monitored_users"] = [
+        profile_users = [
             str(user).strip()
             for user in profile.get("monitored_users", [])
             if str(user).strip()
         ]
+        desired_policy = DESIRED_POLICIES.get(str(ip))
+        if desired_policy:
+            entry["usage_limit"] = desired_policy.get("daily_limit_minutes")
+            entry["lock_times"] = [window["start"] for window in desired_policy.get("bedtime_windows", [])]
+            entry["monitored_users"] = desired_policy.get("monitored_users") or profile_users
+        else:
+            entry["monitored_users"] = profile_users
     return discovered_pcs
 
 
@@ -202,8 +300,8 @@ def is_policy_command(body):
     }
 
 
-def load_pending_commands(pending_file=PENDING_COMMANDS_FILE):
-    pending_path = os.fspath(pending_file)
+def load_pending_commands(pending_file=None):
+    pending_path = os.fspath(pending_file or os.environ.get("KID_PC_PENDING_COMMANDS_FILE", PENDING_COMMANDS_FILE))
     if not os.path.exists(pending_path):
         return {}
     try:
@@ -216,11 +314,11 @@ def load_pending_commands(pending_file=PENDING_COMMANDS_FILE):
     return PENDING_COMMANDS
 
 
-def save_pending_commands(pending_file=PENDING_COMMANDS_FILE):
-    atomic_write_json(pending_file, PENDING_COMMANDS)
+def save_pending_commands(pending_file=None):
+    atomic_write_json(pending_file or os.environ.get("KID_PC_PENDING_COMMANDS_FILE", PENDING_COMMANDS_FILE), PENDING_COMMANDS)
 
 
-def record_pending_command(ip, body, last_error, pending_file=PENDING_COMMANDS_FILE):
+def record_pending_command(ip, body, last_error, pending_file=None):
     PENDING_COMMANDS[ip] = {
         "body": body,
         "last_error": last_error,
@@ -229,7 +327,7 @@ def record_pending_command(ip, body, last_error, pending_file=PENDING_COMMANDS_F
     save_pending_commands(pending_file)
 
 
-def sync_pending_command(ip, sender=None, pending_file=PENDING_COMMANDS_FILE):
+def sync_pending_command(ip, sender=None, pending_file=None):
     pending = PENDING_COMMANDS.get(ip)
     if not pending:
         return False
@@ -244,7 +342,36 @@ def sync_pending_command(ip, sender=None, pending_file=PENDING_COMMANDS_FILE):
     return False
 
 
+def sync_pending_devices_once(sender=None, pending_file=None):
+    synced = 0
+    for ip in sorted(list(PENDING_COMMANDS)):
+        if sync_pending_command(ip, sender=sender, pending_file=pending_file):
+            synced += 1
+    return synced
+
+
+def run_pending_sync_loop(stop_event=None, interval_seconds=30):
+    while True:
+        sync_pending_devices_once()
+        if stop_event is None:
+            time.sleep(interval_seconds)
+            continue
+        if stop_event.wait(interval_seconds):
+            return
+
+
+def start_pending_sync_thread(interval_seconds=30):
+    thread = threading.Thread(
+        target=run_pending_sync_loop,
+        kwargs={"interval_seconds": interval_seconds},
+        daemon=True,
+    )
+    thread.start()
+    return thread
+
+
 load_pending_commands()
+load_desired_policies()
 
 
 def send_signed_body(host, body, port=9999):
@@ -358,7 +485,19 @@ def client_status_from_status(status):
     return "Locked/Disconnected"
 
 
-def apply_status_to_pc_info(pc_info, status):
+def apply_desired_policy_to_pc_info(ip, pc_info):
+    load_desired_policies()
+    policy = DESIRED_POLICIES.get(str(ip))
+    if not policy:
+        return pc_info
+    pc_info["usage_limit"] = policy.get("daily_limit_minutes")
+    pc_info["lock_times"] = [window["start"] for window in policy.get("bedtime_windows", [])]
+    pc_info["monitored_users"] = policy.get("monitored_users") or pc_info.get("monitored_users", [])
+    pc_info["time_remaining"] = None
+    return pc_info
+
+
+def apply_status_to_pc_info(pc_info, status, ip=None):
     if not status:
         pc_info["client_status"] = "Offline"
         pc_info["status"] = "offline"
@@ -366,6 +505,8 @@ def apply_status_to_pc_info(pc_info, status):
         pc_info.pop("current_user", None)
         pc_info["today_usage"] = "0m"
         pc_info["time_remaining"] = None
+        if ip:
+            apply_desired_policy_to_pc_info(ip, pc_info)
         return pc_info
 
     policy = status.get("policy") or {}
@@ -386,6 +527,8 @@ def apply_status_to_pc_info(pc_info, status):
     pc_info["lock_times"] = [window["start"] for window in policy.get("bedtime_windows", [])]
     pc_info["time_remaining"] = time_remaining_from_status(status)
     pc_info["today_usage"] = today_usage_from_status(status, pc_info.get("monitored_users"))
+    if ip and str(ip) in PENDING_COMMANDS:
+        apply_desired_policy_to_pc_info(ip, pc_info)
     return pc_info
 
 
@@ -498,6 +641,18 @@ def send_command(host, command, port=9999):
         record_pending_command(host, body, response)
     return success, response
 
+
+def apply_policy_command(ip, body, current_status=None):
+    policy = update_desired_policy(ip, body, current_status=current_status)
+    apply_body = {"command": "apply_policy", "policy": policy}
+    success, response = send_signed_body(ip, apply_body)
+    if success:
+        PENDING_COMMANDS.pop(ip, None)
+        save_pending_commands()
+        return True, response, False
+    record_pending_command(ip, apply_body, response)
+    return True, f"Policy saved on parent; pending sync ({response})", True
+
 @app.route('/')
 def index():
     """Main page showing all discovered PCs"""
@@ -508,7 +663,7 @@ def index():
         if ip not in discovered_pcs:
             continue
         status = query_status(ip)
-        apply_status_to_pc_info(discovered_pcs[ip], status)
+        apply_status_to_pc_info(discovered_pcs[ip], status, ip=ip)
         discovered_pcs[ip]['pending_sync'] = ip in PENDING_COMMANDS
 
     return render_template_string(INDEX_TEMPLATE,
@@ -528,7 +683,7 @@ def control(ip):
     pc_info = discovered_pcs.get(ip, {'hostname': 'Unknown', 'status': 'unknown'})
     sync_pending_command(ip)
     status = query_status(ip)
-    apply_status_to_pc_info(pc_info, status)
+    apply_status_to_pc_info(pc_info, status, ip=ip)
     pc_info['pending_sync'] = ip in PENDING_COMMANDS
 
     return render_template_string(CONTROL_TEMPLATE, ip=ip, pc_info=pc_info)
@@ -554,16 +709,36 @@ def action():
         success, response = send_command(ip, f"MESSAGE:{message}")
     elif action_type == 'set_limit':
         minutes = data.get('minutes', 120)
-        success, response = send_command(ip, f"SET_LIMIT:{minutes}")
+        success, response, _ = apply_policy_command(
+            ip,
+            {"command": "set_limit", "minutes": int(minutes)},
+            current_status=query_status(ip),
+        )
     elif action_type == 'add_lock_time':
         lock_time = data.get('time', '21:00')
-        success, response = send_command(ip, f"ADD_LOCK_TIME:{lock_time}")
+        success, response, _ = apply_policy_command(
+            ip,
+            {"command": "add_lock_time", "time": lock_time},
+            current_status=query_status(ip),
+        )
     elif action_type == 'clear_usage_limit':
-        success, response = send_command(ip, "CLEAR_USAGE_LIMIT")
+        success, response, _ = apply_policy_command(
+            ip,
+            {"command": "clear_usage_limit"},
+            current_status=query_status(ip),
+        )
     elif action_type == 'clear_lock_times':
-        success, response = send_command(ip, "CLEAR_LOCK_TIMES")
+        success, response, _ = apply_policy_command(
+            ip,
+            {"command": "clear_lock_times"},
+            current_status=query_status(ip),
+        )
     elif action_type == 'clear_all':
-        success, response = send_command(ip, "CLEAR_ALL")
+        success, response, _ = apply_policy_command(
+            ip,
+            {"command": "clear_all"},
+            current_status=query_status(ip),
+        )
         if success and ip in discovered_pcs:
             discovered_pcs[ip]['locked'] = False
     else:
@@ -1217,5 +1392,5 @@ if __name__ == '__main__':
     print(f"\nWeb Control Panel starting...")
     print(f"Access from your phone at: http://{get_local_ip()}:{port}")
     print(f"Or from this PC at: http://localhost:{port}")
-    
+    start_pending_sync_thread()
     app.run(host='0.0.0.0', port=port, debug=False)

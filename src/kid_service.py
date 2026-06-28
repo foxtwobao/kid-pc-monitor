@@ -85,14 +85,16 @@ class KidServiceCore:
         policy = self.load_policy()
         if policy is None:
             return
-        self.state = self.state.for_today()
+        now = self.now_provider()
+        today = now.date().isoformat()
+        if self.state.current_date < today:
+            self.state = self.state.for_today(today)
         username = self.username_provider()
         if not username:
             self.last_tick_at = None
             self.last_tick_username = None
             self.state_store.save(self.state)
             return
-        now = self.now_provider()
         self.account_usage(username, now)
         self.send_remaining_if_changed(policy, username)
         decision = evaluate_policy(policy, self.state, username, now)

@@ -14,6 +14,11 @@ from src.web_panel import (
     save_pending_commands,
     save_device_secret,
     load_device_profiles,
+    DESIRED_POLICIES,
+    load_desired_policies,
+    save_desired_policies,
+    sync_pending_devices_once,
+    update_desired_policy,
     sync_pending_command,
     client_status_from_status,
     today_usage_from_status,
@@ -137,6 +142,176 @@ def test_sync_pending_command_updates_disk_after_success(tmp_path):
     )
 
     assert synced is True
+    assert load_pending_commands(pending_file) == {}
+
+
+def test_update_desired_policy_builds_full_policy_for_offline_limit(tmp_path, monkeypatch):
+    desired_file = tmp_path / "desired.json"
+    profile_file = tmp_path / "profiles.json"
+    profile_file.write_text(
+        '{"192.168.10.251": {"hostname": "kid-laptop", "monitored_users": ["Phil"]}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KID_PC_DEVICE_PROFILES_FILE", str(profile_file))
+    DESIRED_POLICIES.clear()
+
+    policy = update_desired_policy(
+        "192.168.10.251",
+        {"command": "set_limit", "minutes": 90},
+        desired_file=desired_file,
+        now_provider=lambda: "2026-06-28T10:00:00+08:00",
+    )
+
+    assert policy["device_id"] == "192.168.10.251"
+    assert policy["policy_version"] == 1
+    assert policy["daily_limit_minutes"] == 90
+    assert policy["monitored_users"] == ["Phil"]
+    assert load_desired_policies(desired_file)["192.168.10.251"]["daily_limit_minutes"] == 90
+
+
+def test_update_desired_policy_keeps_limit_when_adding_bedtime(tmp_path):
+    desired_file = tmp_path / "desired.json"
+    DESIRED_POLICIES.clear()
+    save_desired_policies(
+        {
+            "192.168.10.251": {
+                "device_id": "192.168.10.251",
+                "policy_version": 3,
+                "daily_limit_minutes": 90,
+                "bedtime_windows": [],
+                "monitored_users": ["Phil"],
+                "exempt_users": [],
+                "warning_minutes": [10],
+                "temporary_extensions": {},
+                "parent_panel_allowed_ips": [],
+                "updated_at": "2026-06-28T09:00:00+08:00",
+            }
+        },
+        desired_file,
+    )
+
+    policy = update_desired_policy(
+        "192.168.10.251",
+        {"command": "add_lock_time", "time": "21:30"},
+        desired_file=desired_file,
+        now_provider=lambda: "2026-06-28T10:00:00+08:00",
+    )
+
+    assert policy["policy_version"] == 4
+    assert policy["daily_limit_minutes"] == 90
+    assert policy["bedtime_windows"] == [{"start": "21:30", "end": "23:59"}]
+
+
+def test_sync_pending_command_sends_full_apply_policy(tmp_path):
+    PENDING_COMMANDS.clear()
+    pending_file = tmp_path / "pending.json"
+    policy = {
+        "device_id": "192.168.10.251",
+        "policy_version": 1,
+        "daily_limit_minutes": 90,
+        "bedtime_windows": [],
+        "monitored_users": ["Phil"],
+        "exempt_users": [],
+        "warning_minutes": [10],
+        "temporary_extensions": {},
+        "parent_panel_allowed_ips": [],
+        "updated_at": "2026-06-28T10:00:00+08:00",
+    }
+    record_pending_command("192.168.10.251", {"command": "apply_policy", "policy": policy}, "offline", pending_file)
+    calls = []
+
+    synced = sync_pending_command(
+        "192.168.10.251",
+        sender=lambda ip, body: calls.append((ip, body)) or (True, '{"success": true}'),
+        pending_file=pending_file,
+    )
+
+    assert synced is True
+    assert calls == [("192.168.10.251", {"command": "apply_policy", "policy": policy})]
+    assert load_pending_commands(pending_file) == {}
+
+
+def test_offline_set_limit_action_saves_policy_and_returns_pending(tmp_path, monkeypatch):
+    desired_file = tmp_path / "desired.json"
+    pending_file = tmp_path / "pending.json"
+    profile_file = tmp_path / "profiles.json"
+    profile_file.write_text(
+        '{"192.168.10.251": {"hostname": "kid-laptop", "monitored_users": ["Phil"]}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KID_PC_DESIRED_POLICIES_FILE", str(desired_file))
+    monkeypatch.setenv("KID_PC_PENDING_COMMANDS_FILE", str(pending_file))
+    monkeypatch.setenv("KID_PC_DEVICE_PROFILES_FILE", str(profile_file))
+    monkeypatch.setattr("src.web_panel.query_status", lambda _ip: None)
+    monkeypatch.setattr("src.web_panel.send_signed_body", lambda _ip, _body: (False, "offline"))
+    PENDING_COMMANDS.clear()
+    DESIRED_POLICIES.clear()
+
+    response = app.test_client().post(
+        "/action",
+        json={"ip": "192.168.10.251", "action": "set_limit", "minutes": 45},
+    )
+
+    body = response.get_json()
+    assert response.status_code == 200
+    assert body["success"] is True
+    assert body["pending"] is True
+    desired = load_desired_policies(desired_file)["192.168.10.251"]
+    assert desired["daily_limit_minutes"] == 45
+    pending = load_pending_commands(pending_file)["192.168.10.251"]["body"]
+    assert pending == {"command": "apply_policy", "policy": desired}
+
+
+def test_offline_control_page_shows_desired_policy(tmp_path, monkeypatch):
+    desired_file = tmp_path / "desired.json"
+    DESIRED_POLICIES.clear()
+    save_desired_policies(
+        {
+            "192.168.10.251": {
+                "device_id": "192.168.10.251",
+                "policy_version": 2,
+                "daily_limit_minutes": 45,
+                "bedtime_windows": [{"start": "21:30", "end": "23:59"}],
+                "monitored_users": ["Phil"],
+                "exempt_users": [],
+                "warning_minutes": [10],
+                "temporary_extensions": {},
+                "parent_panel_allowed_ips": [],
+                "updated_at": "2026-06-28T10:00:00+08:00",
+            }
+        },
+        desired_file,
+    )
+    monkeypatch.setenv("KID_PC_DESIRED_POLICIES_FILE", str(desired_file))
+    monkeypatch.setattr("src.web_panel.query_status", lambda _ip: None)
+    monkeypatch.setattr("src.web_panel.sync_pending_command", lambda _ip: False)
+    discovered_pcs.clear()
+    discovered_pcs["192.168.10.251"] = {"hostname": "kid-laptop", "pending_sync": True}
+
+    response = app.test_client().get("/control/192.168.10.251")
+
+    assert response.status_code == 200
+    assert b"Client Status:" in response.data
+    assert b"Offline" in response.data
+    assert b"45 minutes" in response.data
+    assert b"21:30" in response.data
+    assert b"Phil" in response.data
+
+
+def test_sync_pending_devices_once_attempts_all_pending_devices(tmp_path):
+    PENDING_COMMANDS.clear()
+    pending_file = tmp_path / "pending.json"
+    record_pending_command("192.168.10.251", {"command": "apply_policy", "policy": {"device_id": "a"}}, "offline", pending_file)
+    record_pending_command("192.168.10.252", {"command": "apply_policy", "policy": {"device_id": "b"}}, "offline", pending_file)
+    calls = []
+
+    synced = sync_pending_devices_once(
+        sender=lambda ip, body: calls.append((ip, body)) or (True, '{"success": true}'),
+        pending_file=pending_file,
+    )
+
+    assert synced == 2
+    assert [call[0] for call in calls] == ["192.168.10.251", "192.168.10.252"]
     assert load_pending_commands(pending_file) == {}
 
 

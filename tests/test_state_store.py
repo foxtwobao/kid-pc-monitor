@@ -10,7 +10,7 @@ from src.state_store import AgentState, StateStore, atomic_write_json
 def test_state_store_round_trips_json(tmp_path):
     store = StateStore(tmp_path / "state.json")
     state = AgentState(
-        current_date="2026-06-27",
+        current_date=date.today().isoformat(),
         usage_seconds_by_user={"kid": 120},
         active_lock_reason=None,
         last_policy_version=7,
