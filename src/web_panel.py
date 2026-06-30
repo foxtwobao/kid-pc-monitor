@@ -406,15 +406,9 @@ def query_status(ip, port=9999):
 
 def time_remaining_from_status(status):
     policy = status.get("policy")
-    state = status.get("state", {})
     if not policy or not policy.get("daily_limit_minutes"):
         return "No limits set"
-    usage = state.get("usage_seconds_by_user", {})
-    current_user = status.get("current_user")
-    if current_user and current_user in usage:
-        used_seconds = usage[current_user]
-    else:
-        used_seconds = max(usage.values(), default=0)
+    used_seconds = today_usage_seconds_from_status(status)
     remaining_seconds = policy["daily_limit_minutes"] * 60 - used_seconds
     remaining_minutes = max(0, int(remaining_seconds / 60))
     return f"{remaining_minutes} minutes"

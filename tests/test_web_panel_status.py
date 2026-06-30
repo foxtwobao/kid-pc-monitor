@@ -37,6 +37,21 @@ def test_time_remaining_from_status_uses_daily_limit_and_usage():
     assert time_remaining_from_status(status) == "30 minutes"
 
 
+def test_time_remaining_from_status_uses_monitored_user_not_active_admin():
+    status = {
+        "policy": {"daily_limit_minutes": 120, "bedtime_windows": [], "monitored_users": ["Phil"]},
+        "state": {
+            "usage_seconds_by_user": {
+                "DESKTOP\\Phil": 5775,
+                "DESKTOP\\foxandcat": 1181,
+            }
+        },
+        "current_user": "DESKTOP\\foxandcat",
+    }
+
+    assert time_remaining_from_status(status) == "23 minutes"
+
+
 def test_time_remaining_from_status_handles_missing_limit():
     assert time_remaining_from_status({"policy": None, "state": {}}) == "No limits set"
 
