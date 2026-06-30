@@ -85,6 +85,33 @@ def test_client_status_from_status_distinguishes_active_locked_and_offline():
     assert client_status_from_status({"state": {"active_lock_reason": "manual"}}) == "Locked (manual)"
 
 
+def test_client_status_marks_active_unmonitored_user():
+    status = {
+        "policy": {"monitored_users": ["Phil"]},
+        "state": {},
+        "current_user": "DESKTOP\\foxandcat",
+    }
+
+    assert client_status_from_status(status) == "Active (not monitored)"
+
+
+def test_apply_status_sets_current_user_monitoring_flag():
+    from src.web_panel import apply_status_to_pc_info
+
+    pc_info = {}
+    status = {
+        "policy": {"monitored_users": ["Phil"], "daily_limit_minutes": 1, "bedtime_windows": []},
+        "state": {"usage_seconds_by_user": {"DESKTOP\\Phil": 5775}},
+        "current_user": "DESKTOP\\foxandcat",
+    }
+
+    apply_status_to_pc_info(pc_info, status)
+
+    assert pc_info["client_status"] == "Active (not monitored)"
+    assert pc_info["current_user_is_monitored"] is False
+    assert pc_info["monitored_user_status"] == "No monitored user active"
+
+
 def test_policy_commands_are_pending_sync_candidates():
     assert is_policy_command(command_body_from_legacy("SET_LIMIT:30")) is True
     assert is_policy_command(command_body_from_legacy("CLEAR_ALL")) is True

@@ -473,6 +473,24 @@ def today_usage_from_status(status, fallback_monitored_users=None):
     return format_usage_duration(today_usage_seconds_from_status(status, fallback_monitored_users))
 
 
+def monitored_users_from_status(status):
+    policy = status.get("policy") or {} if status else {}
+    return [
+        str(user).strip()
+        for user in policy.get("monitored_users", [])
+        if str(user).strip()
+    ]
+
+
+def current_user_is_monitored(status):
+    if not status or not status.get("current_user"):
+        return False
+    monitored_users = monitored_users_from_status(status)
+    if not monitored_users:
+        return True
+    return any(_name_matches(monitored_user, status["current_user"]) for monitored_user in monitored_users)
+
+
 def client_status_from_status(status):
     if not status:
         return "Offline"
@@ -481,6 +499,8 @@ def client_status_from_status(status):
     if lock_reason:
         return f"Locked ({lock_reason})"
     if status.get("current_user"):
+        if not current_user_is_monitored(status):
+            return "Active (not monitored)"
         return "Active"
     return "Locked/Disconnected"
 
@@ -517,6 +537,12 @@ def apply_status_to_pc_info(pc_info, status, ip=None):
     pc_info["status"] = "online"
     pc_info["client_status"] = client_status_from_status(status)
     pc_info["locked"] = bool(lock_reason)
+    pc_info["current_user_is_monitored"] = current_user_is_monitored(status)
+    pc_info["monitored_user_status"] = (
+        "Active"
+        if pc_info["current_user_is_monitored"]
+        else "No monitored user active"
+    )
     if current_user:
         pc_info["current_user"] = current_user
     else:
@@ -1118,6 +1144,10 @@ CONTROL_TEMPLATE = '''
             <div class="action-title">📊 Current Settings</div>
 
             <p>📡 <strong>Client Status:</strong> {{ pc_info.get('client_status', 'Offline') }}</p>
+
+            {% if pc_info.get('monitored_user_status') %}
+            <p>👤 <strong>Monitored User Status:</strong> {{ pc_info.monitored_user_status }}</p>
+            {% endif %}
 
             <p>📈 <strong>Today Usage:</strong> {{ pc_info.get('today_usage', '0m') }}</p>
 
